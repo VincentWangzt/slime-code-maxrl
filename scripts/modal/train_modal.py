@@ -4,7 +4,6 @@ import modal
 
 import _runtime
 from _app import (
-    asset_function_options,
     parse_entrypoint_arguments,
     training_function_options,
     training_resources,
@@ -13,7 +12,6 @@ from _app import (
 app = modal.App("slime-train")
 
 train = app.function(**training_function_options())(_runtime.train)
-prepare_assets = app.function(**asset_function_options())(_runtime.prepare_assets)
 
 
 @app.local_entrypoint()

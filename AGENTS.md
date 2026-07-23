@@ -6,12 +6,12 @@ Always use `uv` for local commands; never invoke `pip`, `python`, `pytest`, or `
 
 - `uv sync --project scripts/modal --locked`: create or update the persistent local Modal tooling environment.
 - `uv run --project scripts/modal ruff check <changed-files>`: lint only changed code.
+- `uv run --project scripts/modal modal run scripts/modal/command_modal.py -- <command> [args...]`: execute an arbitrary command in the Modal runtime container. Use `-- bash -lc '<commands>'` for shell syntax.
 - `uv run --project scripts/modal modal run scripts/modal/train_modal.py --modal-gpu-count <1-8> -- <slime-args>`: run synchronous training remotely.
 - `uv run --project scripts/modal modal run scripts/modal/train_async_modal.py --modal-gpu-count <1-8> -- <slime-args>`: run asynchronous training remotely.
 
-The Qwen2.5-0.5B examples are prepared once and then run with:
+Prepare the Qwen2.5-0.5B model, converted checkpoint, and dataset with `command_modal.py` by following `scripts/modal/README.md`. Then run the examples with:
 
-- `uv run --project scripts/modal bash scripts/modal/examples/prepare-qwen2.5-0.5B.sh`
 - `uv run --project scripts/modal bash scripts/modal/examples/run-qwen2.5-0.5B.sh`
 - `uv run --project scripts/modal bash scripts/modal/examples/run-qwen2.5-0.5B-async.sh`
 
@@ -19,6 +19,8 @@ For debugging, prefer small Modal snippets that exercise one import, shape, or c
 
 ## Modal Runtime
 Modal is the runtime for all Python execution. Keep Modal entrypoints thin: they should configure images, secrets, volumes, and dispatch to importable Python modules. Place entrypoint scripts and their local tooling in `scripts/modal/`. Dataset and model files belong in the `code-maxrl-slime` Modal Volume; do not assume they exist locally.
+
+Use the intentionally self-contained `scripts/modal/command_modal.py` for one-off downloads, checkpoint conversions, inspections, and focused remote commands. Keep it generic: model names, dataset names, and their save paths belong at the command invocation site, not in `_runtime.py` or the training entrypoints.
 
 ### Modal Log Retrieval
 For recent failures, recover logs via app id, then container id:

@@ -13,6 +13,7 @@ The cached image contains the root trainers plus `slime/` and `slime_plugins/`. 
 `scripts/`, which Modal uploads at container startup and mounts at `/root/slime/scripts` without
 rebuilding the image. `_app.py` owns local image and resource configuration; `_runtime.py` is
 imported remotely from that mounted tree with Modal's automatic source inclusion disabled.
+`command_modal.py` uses the same image and persistent Volume for one-off commands.
 
 ## Local environment
 
@@ -31,23 +32,49 @@ Modal loads it directly with `Secret.from_dotenv`; its values become environment
 remote function. The `.env` file is excluded from both the Docker build context and all container
 mounts.
 
-## Prepare the example assets once
+## Run a command in the Modal container
 
-The preparation function downloads Qwen2.5-0.5B-Instruct and dapo-math-17k, then converts the model
-with `tools/convert_hf_to_torch_dist.py`. This direct command works from PowerShell, Bash, and other
-local shells:
-
-```bash
-uv run --project scripts/modal modal run scripts/modal/train_modal.py::prepare_assets
-```
-
-The provided Bash wrapper runs that same command:
+`command_modal.py` executes an arbitrary command in the runtime image with one H100, 8 CPUs, 32 GiB
+of memory, the repository-root `.env`, and the `code-maxrl-slime` Volume mounted at `/data`. Its
+working directory is `/root/slime`, and its timeout is four hours.
 
 ```bash
-bash scripts/modal/examples/prepare-qwen2.5-0.5B.sh
+uv run --project scripts/modal modal run scripts/modal/command_modal.py -- nvidia-smi
 ```
 
-It creates these persistent paths:
+Every token after `--` is passed directly to the remote process as an argument. There is no implicit
+shell interpretation. Invoke Bash explicitly when a command needs variables, pipelines, redirects,
+`source`, or multiple statements:
+
+```bash
+uv run --project scripts/modal modal run scripts/modal/command_modal.py -- bash -lc 'set -euo pipefail; pwd; nvidia-smi'
+```
+
+A nonzero command status fails the Modal invocation. Hugging Face, Torch, and XDG caches are placed
+under `/data/cache`. When invoking the Windows executables through Git Bash, first run
+`export MSYS2_ARG_CONV_EXCL="*"` so MSYS does not rewrite container paths such as `/data/models`.
+
+## Download and convert checkpoints
+
+Choose persistent paths under `/data`; they are inputs supplied to the command runner, not defaults encoded in the Modal adapter. For the Qwen2.5-0.5B example, download the Hugging Face checkpoint:
+
+```bash
+uv run --project scripts/modal modal run scripts/modal/command_modal.py -- hf download Qwen/Qwen2.5-0.5B-Instruct --local-dir /data/models/Qwen2.5-0.5B-Instruct
+```
+
+Download the prompt dataset independently:
+
+```bash
+uv run --project scripts/modal modal run scripts/modal/command_modal.py -- hf download --repo-type dataset zhuzilin/dapo-math-17k --local-dir /data/datasets/dapo-math-17k
+```
+
+Then convert the Hugging Face checkpoint to the torch-distributed format consumed by Megatron. The conversion arguments are architecture-specific: source the model configuration matching the exact checkpoint. Changing only the Hugging Face repository name is not sufficient.
+
+```bash
+uv run --project scripts/modal modal run scripts/modal/command_modal.py -- bash -lc 'set -euo pipefail; source scripts/models/qwen2.5-0.5B.sh; python3 tools/convert_hf_to_torch_dist.py "${MODEL_ARGS[@]}" --hf-checkpoint "/data/models/Qwen2.5-0.5B-Instruct" --save "/data/models/Qwen2.5-0.5B-Instruct_torch_dist";'
+```
+
+The Qwen example commands above create:
 
 ```text
 /data/models/Qwen2.5-0.5B-Instruct
@@ -56,21 +83,20 @@ It creates these persistent paths:
 /data/cache
 ```
 
-The command reuses a complete converted release checkpoint. If an earlier conversion left an
-incomplete generated directory at the exact target path, it replaces that directory and retries.
+For another model, use a distinct Hugging Face directory and conversion output directory, and source the corresponding file under `scripts/models/` (or provide the correct Megatron model arguments directly). Training should pass the downloaded directory to `--hf-checkpoint`, the converted directory to `--ref-load`, and the downloaded JSONL file to `--prompt-data`.
 
 ## Run the examples
 
 Synchronous, colocated actor and rollout on one GPU:
 
 ```bash
-bash scripts/modal/examples/run-qwen2.5-0.5B.sh
+uv run --project scripts/modal bash scripts/modal/examples/run-qwen2.5-0.5B.sh
 ```
 
 Asynchronous training with one actor GPU and three rollout GPUs:
 
 ```bash
-bash scripts/modal/examples/run-qwen2.5-0.5B-async.sh
+uv run --project scripts/modal bash scripts/modal/examples/run-qwen2.5-0.5B-async.sh
 ```
 
 For custom arguments, invoke an entrypoint directly:

@@ -106,7 +106,7 @@ def training_function_options() -> dict[str, object]:
     }
 
 
-def asset_function_options() -> dict[str, object]:
+def command_function_options() -> dict[str, object]:
     return {
         "image": RUNTIME_IMAGE,
         "volumes": {VOLUME_MOUNT_PATH: VOLUME},
