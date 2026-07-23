@@ -5,7 +5,14 @@ H100/H200 node, starts a fresh Ray head inside that container, waits for the Ray
 the `code-maxrl-slime` Volume persists.
 
 The root `train.py` and `train_async.py` remain the actual training programs. The Modal entrypoints
-consume `--gpu-count` and forward every argument after `--` to the corresponding program.
+consume `--modal-gpu-count` and forward every other argument unchanged to the corresponding program.
+The examples retain `--` as a recommended boundary so Modal does not consume Slime options such as
+`--help`; Modal removes that marker before invoking the local entrypoint.
+
+The cached image contains the root trainers plus `slime/` and `slime_plugins/`. It excludes
+`scripts/`, which Modal uploads at container startup and mounts at `/root/slime/scripts` without
+rebuilding the image. `_app.py` owns local image and resource configuration; `_runtime.py` is
+imported remotely from that mounted tree with Modal's automatic source inclusion disabled.
 
 ## Local environment
 
@@ -16,11 +23,13 @@ uv sync --project scripts/modal --locked
 ```
 
 Subsequent commands use `scripts/modal/.venv` through `uv run --project scripts/modal`; no `--with`
-arguments are needed.
+arguments are needed. The locked Modal dependency includes local API-proxy support so these commands
+can honor host proxy settings.
 
 An optional repository-root `.env` can contain credentials such as `HF_TOKEN` or `WANDB_API_KEY`.
-Its non-empty values are converted locally to a Modal Secret. The `.env` file is excluded from both
-the Docker build context and all container mounts.
+Modal loads it directly with `Secret.from_dotenv`; its values become environment variables in each
+remote function. The `.env` file is excluded from both the Docker build context and all container
+mounts.
 
 ## Prepare the example assets once
 
@@ -67,13 +76,13 @@ bash scripts/modal/examples/run-qwen2.5-0.5B-async.sh
 For custom arguments, invoke an entrypoint directly:
 
 ```bash
-uv run --project scripts/modal modal run scripts/modal/train_modal.py --gpu-count 1 -- <slime-args>
-uv run --project scripts/modal modal run scripts/modal/train_async_modal.py --gpu-count 4 -- <slime-args>
+uv run --project scripts/modal modal run scripts/modal/train_modal.py --modal-gpu-count 1 -- <slime-args>
+uv run --project scripts/modal modal run scripts/modal/train_async_modal.py --modal-gpu-count 4 -- <slime-args>
 ```
 
-`--gpu-count` is required and accepts 1 through 8. Modal may transparently substitute H200s for the
-requested H100s. The adapter rejects multi-node and checkpoint-saving options. Jobs have a 24-hour
-timeout and restart from the beginning after failure because no training checkpoint is written.
+`--modal-gpu-count` is required and accepts 1 through 8. Modal may transparently substitute H200s
+for the requested H100s. Slime validates all remaining training arguments. Jobs have a 24-hour
+timeout and no automatic retries.
 
 ## Logs
 

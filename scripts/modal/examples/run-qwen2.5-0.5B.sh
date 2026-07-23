@@ -79,7 +79,7 @@ MISC_ARGS=(
 )
 
 uv run --project scripts/modal modal run scripts/modal/train_modal.py \
-    --gpu-count 1 \
+    --modal-gpu-count 1 \
     -- \
     "${MODEL_ARGS[@]}" \
     "${CKPT_ARGS[@]}" \

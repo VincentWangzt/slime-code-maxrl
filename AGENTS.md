@@ -6,8 +6,8 @@ Always use `uv` for local commands; never invoke `pip`, `python`, `pytest`, or `
 
 - `uv sync --project scripts/modal --locked`: create or update the persistent local Modal tooling environment.
 - `uv run --project scripts/modal ruff check <changed-files>`: lint only changed code.
-- `uv run --project scripts/modal modal run scripts/modal/train_modal.py --gpu-count <1-8> -- <slime-args>`: run synchronous training remotely.
-- `uv run --project scripts/modal modal run scripts/modal/train_async_modal.py --gpu-count <1-8> -- <slime-args>`: run asynchronous training remotely.
+- `uv run --project scripts/modal modal run scripts/modal/train_modal.py --modal-gpu-count <1-8> -- <slime-args>`: run synchronous training remotely.
+- `uv run --project scripts/modal modal run scripts/modal/train_async_modal.py --modal-gpu-count <1-8> -- <slime-args>`: run asynchronous training remotely.
 
 The Qwen2.5-0.5B examples are prepared once and then run with:
 

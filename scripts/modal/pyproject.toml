@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Local tooling for Slime's ephemeral Modal entrypoints"
 requires-python = ">=3.10"
 dependencies = [
-    "modal>=1.0,<2",
+    "modal[api-proxy-support]>=1.0,<2",
     "python-dotenv>=1.0,<2",
     "ruff>=0.11,<1",
 ]
@@ -19,4 +19,3 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["E", "F", "B", "UP"]
 ignore = ["E501"]
-
