@@ -16,6 +16,9 @@ from slime.utils.logging_utils import configure_logger
 
 logger = logging.getLogger(__name__)
 
+_MAXRL_REGRESSION_RM_PATH = "slime_plugins.maxrl.regression.boxed_gaussian_reward"
+_MAXRL_REWARD_KEY = "maxrl_log_likelihood"
+
 
 def reset_arg(parser, name, **kwargs):
     """
@@ -814,7 +817,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument(
                 "--n-samples-per-eval-prompt",
                 type=int,
-                default=None,
+                default=1,
                 help="number of responses for each prompt in generation",
             )
             parser.add_argument("--eval-temperature", type=float, default=None)
@@ -954,12 +957,6 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                     "Degree of the MaxRL leave-one-out estimator. "
                     "Defaults to --n-samples-per-prompt."
                 ),
-            )
-            parser.add_argument(
-                "--maxrl-log-sup-likelihood",
-                type=float,
-                default=0.0,
-                help="Log of the likelihood supremum used to normalize MaxRL scores.",
             )
             parser.add_argument(
                 "--maxrl-score-std",
@@ -1755,25 +1752,30 @@ def _validate_maxrl_args(args) -> None:
             "--maxrl-degree must be between 1 and --n-samples-per-prompt; "
             f"got {args.maxrl_degree} and {args.n_samples_per_prompt}."
         )
-    if not math.isfinite(args.maxrl_log_sup_likelihood):
-        raise ValueError("--maxrl-log-sup-likelihood must be finite.")
     if not math.isfinite(args.maxrl_score_std) or args.maxrl_score_std <= 0:
         raise ValueError("--maxrl-score-std must be positive and finite.")
 
-    if args.n_samples_per_eval_prompt <= 0 or args.n_samples_per_eval_prompt % 2 == 0:
+    if args.custom_rm_path != _MAXRL_REGRESSION_RM_PATH:
         raise ValueError(
-            "MaxRL requires --n-samples-per-eval-prompt to be a positive odd integer."
+            "MaxRL requires --custom-rm-path "
+            f"{_MAXRL_REGRESSION_RM_PATH}."
         )
+    if args.reward_key != _MAXRL_REWARD_KEY:
+        raise ValueError(f"MaxRL requires --reward-key {_MAXRL_REWARD_KEY}.")
+    if args.group_rm:
+        raise ValueError("MaxRL requires per-sample rewards; do not set --group-rm.")
+
+    if args.n_samples_per_eval_prompt <= 0:
+        raise ValueError("MaxRL requires --n-samples-per-eval-prompt to be positive.")
     invalid_eval_datasets = [
         dataset.name
         for dataset in args.eval_datasets
         if dataset.n_samples_per_eval_prompt is None
         or dataset.n_samples_per_eval_prompt <= 0
-        or dataset.n_samples_per_eval_prompt % 2 == 0
     ]
     if invalid_eval_datasets:
         raise ValueError(
-            "MaxRL requires a positive odd n_samples_per_eval_prompt for every "
+            "MaxRL requires a positive n_samples_per_eval_prompt for every "
             f"eval dataset; invalid datasets: {invalid_eval_datasets}."
         )
     if not args.rollout_shuffle:
@@ -1824,9 +1826,7 @@ def _validate_maxrl_args(args) -> None:
 
 def slime_validate_args(args):
     if args.n_samples_per_eval_prompt is None:
-        args.n_samples_per_eval_prompt = (
-            65 if args.advantage_estimator == "maxrl" else 1
-        )
+        args.n_samples_per_eval_prompt = 1
     args.eval_datasets = _resolve_eval_datasets(args)
 
     if args.kl_coef != 0 or args.use_kl_loss:

@@ -21,7 +21,6 @@ def _maxrl_rollout_args(**overrides):
         "reward_key": "maxrl_log_likelihood",
         "n_samples_per_prompt": 2,
         "maxrl_degree": 2,
-        "maxrl_log_sup_likelihood": 0.0,
         "maxrl_subtract_baseline": True,
     }
     values.update(overrides)

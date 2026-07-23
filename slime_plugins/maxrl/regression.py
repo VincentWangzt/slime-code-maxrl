@@ -3,50 +3,31 @@
 from __future__ import annotations
 
 import math
-import re
 from collections import defaultdict
 from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 
+from slime.rollout.rm_hub.math_utils import extract_answer
 from slime.utils.maxrl import compute_grouped_maxrl_weights
 from slime.utils.types import Sample
 
-_BOX_MARKER = r"\boxed{"
-_NUMBER_PATTERN = re.compile(
-    r"[+-]?(?:\d+|\d+\.\d+)(?:[eE][+-]?\d+)?"
-)
 _OBSERVATION_METADATA_KEY = "maxrl_regression"
 
 
 def extract_boxed_number(response: str | None) -> float | None:
-    r"""Extract a finite number from the last complete ``\boxed{...}``."""
+    r"""Extract a finite float from the rightmost ``\boxed{...}``."""
     if not isinstance(response, str):
         return None
 
-    last_content: str | None = None
-    search_from = 0
-    while (marker_start := response.find(_BOX_MARKER, search_from)) >= 0:
-        content_start = marker_start + len(_BOX_MARKER)
-        depth = 1
-        cursor = content_start
-        while cursor < len(response) and depth:
-            if response[cursor] == "{":
-                depth += 1
-            elif response[cursor] == "}":
-                depth -= 1
-            cursor += 1
-        if depth == 0:
-            last_content = response[content_start : cursor - 1]
-        search_from = content_start
-
-    if last_content is None:
+    candidate = extract_answer(response)
+    if candidate is None:
         return None
-    candidate = last_content.strip()
-    if _NUMBER_PATTERN.fullmatch(candidate) is None:
+    try:
+        value = float(candidate.strip())
+    except (TypeError, ValueError):
         return None
-    value = float(candidate)
     return value if math.isfinite(value) else None
 
 
@@ -73,10 +54,6 @@ def _score_observation(args: Any, sample: Sample) -> dict[str, Any]:
     if not math.isfinite(score_std) or score_std <= 0:
         raise ValueError("--maxrl-score-std must be positive and finite.")
 
-    log_sup_likelihood = float(args.maxrl_log_sup_likelihood)
-    if not math.isfinite(log_sup_likelihood):
-        raise ValueError("--maxrl-log-sup-likelihood must be finite.")
-
     prediction = extract_boxed_number(sample.response)
     if prediction is None:
         log_likelihood = float("-inf")
@@ -84,13 +61,7 @@ def _score_observation(args: Any, sample: Sample) -> dict[str, Any]:
     else:
         standardized_error = (prediction - target) / score_std
         log_likelihood = -0.5 * standardized_error * standardized_error
-        normalized_log_likelihood = log_likelihood - log_sup_likelihood
-        if normalized_log_likelihood > 1e-6:
-            raise ValueError(
-                "The Gaussian reward exceeds --maxrl-log-sup-likelihood; "
-                "increase the configured supremum."
-            )
-        score = math.exp(min(normalized_log_likelihood, 0.0))
+        score = math.exp(log_likelihood)
 
     return {
         "target": target,
@@ -229,7 +200,6 @@ def log_train_regression_metrics(
                 if args.maxrl_degree is not None
                 else args.n_samples_per_prompt
             ),
-            log_sup_likelihood=args.maxrl_log_sup_likelihood,
             subtract_baseline=args.maxrl_subtract_baseline,
         ),
         dtype=np.float64,
@@ -282,9 +252,9 @@ def _prompt_predictions(
 
     group_sizes = {len(observations) for observations in grouped.values()}
     expected_group_size = next(iter(group_sizes)) if len(group_sizes) == 1 else 0
-    if len(group_sizes) != 1 or expected_group_size <= 0 or expected_group_size % 2 == 0:
+    if len(group_sizes) != 1 or expected_group_size <= 0:
         raise ValueError(
-            "CDSS evaluation requires equally sized, positive odd sample groups; "
+            "CDSS evaluation requires equally sized, non-empty sample groups; "
             f"got sizes {sorted(group_sizes)}."
         )
     predictions: list[dict[str, Any]] = []

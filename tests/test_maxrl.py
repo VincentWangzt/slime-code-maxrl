@@ -57,13 +57,10 @@ def test_estimator_matches_brute_force(degree, subtract_baseline):
     sigma = torch.tensor([[0.2, 0.5, 0.7, 0.9]], dtype=torch.float64)
     config = MaxRLEstimatorConfig(
         degree=degree,
-        log_sup_likelihood=2.0,
         subtract_baseline=subtract_baseline,
     )
 
-    actual = config.compute_score_weights(
-        log_likelihoods=sigma.log() + 2.0
-    )
+    actual = config.compute_score_weights(log_likelihoods=sigma.log())
     expected = _brute_force_weights(
         sigma[0],
         degree=degree,
@@ -85,7 +82,6 @@ def test_grouped_estimator_restores_interleaved_input_order():
         groups,
         group_size=2,
         degree=2,
-        log_sup_likelihood=0.0,
         subtract_baseline=False,
     )
 
@@ -116,7 +112,6 @@ def test_all_failed_group_has_zero_weight():
         [0, 0],
         group_size=2,
         degree=2,
-        log_sup_likelihood=0.0,
         subtract_baseline=True,
     )
 
@@ -135,10 +130,10 @@ def test_estimator_rejects_invalid_log_likelihoods(bad_value):
 
 
 @pytest.mark.unit
-def test_estimator_rejects_likelihood_above_supremum():
+def test_estimator_rejects_unnormalized_positive_log_likelihood():
     config = MaxRLEstimatorConfig(degree=1)
 
-    with pytest.raises(ValueError, match="exceeded"):
+    with pytest.raises(ValueError, match="normalized and <= 0"):
         config.compute_score_weights(
             log_likelihoods=torch.tensor([[0.1, 0.0]])
         )
@@ -159,6 +154,5 @@ def test_grouped_estimator_rejects_invalid_groups(groups, message):
             groups,
             group_size=2,
             degree=2,
-            log_sup_likelihood=0.0,
             subtract_baseline=True,
         )

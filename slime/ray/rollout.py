@@ -78,7 +78,6 @@ def _compute_maxrl_weights(args, samples: list[Sample], raw_rewards: list[float]
         [sample.group_index for sample in samples],
         group_size=args.n_samples_per_prompt,
         degree=args.maxrl_degree,
-        log_sup_likelihood=args.maxrl_log_sup_likelihood,
         subtract_baseline=args.maxrl_subtract_baseline,
     )
 

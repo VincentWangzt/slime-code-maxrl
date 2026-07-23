@@ -16,11 +16,22 @@ Use the first-class estimator with the boxed-number reward and metric hooks:
 
 Each CDSS row must provide a finite numeric label and a non-empty
 `metadata.language`. Evaluation configuration must name the dataset `CDSS`.
-The reward extracts the last complete `\boxed{NUMBER}` and accepts only signed
-integers, decimals with digits on both sides of the point, or `e`/`E`
-scientific notation.
+The reward reuses Slime's rightmost-box extraction, strips the extracted
+content, and converts it with `float`. This accepts finite signed values,
+including `.5`, `1.`, and scientific notation. A missing, malformed, or
+non-finite rightmost box is an extraction failure; earlier boxes are not used
+as fallbacks.
 
-MaxRL defaults to degree `N`, leave-one-out baseline subtraction, log-likelihood
-supremum `0`, Gaussian score standard deviation `1`, and 65 evaluation samples
-per prompt. The sample counts and estimator settings remain configurable
-through their corresponding CLI options.
+MaxRL consumes already normalized log-likelihoods: every value must be finite
+or `-inf` and no value may be materially greater than `0`. The bundled reward
+computes
+`maxrl_log_likelihood = -0.5 * ((prediction - target) / maxrl_score_std)^2`
+and `maxrl_score = exp(maxrl_log_likelihood)`.
+
+MaxRL requires the exact `--custom-rm-path` and `--reward-key` shown above and
+per-sample reward mode (do not set `--group-rm`). It defaults to degree `N`,
+leave-one-out baseline subtraction, Gaussian score standard deviation `1`,
+and one evaluation sample per prompt. For a 65-sample CDSS median evaluation,
+set `--n-samples-per-eval-prompt 65` explicitly (globally or in the CDSS eval
+dataset configuration). The logging hooks and `--eval-reward-key maxrl_score`
+shown above are recommended, but are not validation requirements.

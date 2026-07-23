@@ -25,11 +25,10 @@ NUM_GPUS = 0
 def _args(**overrides):
     values = {
         "maxrl_score_std": 1.0,
-        "maxrl_log_sup_likelihood": 0.0,
         "maxrl_degree": 2,
         "maxrl_subtract_baseline": True,
         "n_samples_per_prompt": 2,
-        "n_samples_per_eval_prompt": 3,
+        "n_samples_per_eval_prompt": 2,
     }
     values.update(overrides)
     return types.SimpleNamespace(**values)
@@ -63,19 +62,26 @@ def _sample(
         (r"\boxed{1\text{ ms}}", None),
         (r"\boxed{NaN}", None),
         (r"\boxed{inf}", None),
-        (r"\boxed{.5}", None),
-        (r"\boxed{1.}", None),
+        (r"\boxed{.5}", 0.5),
+        (r"\boxed{1.}", 1.0),
         (r"\boxed{3", None),
         (r"no answer", None),
     ],
 )
-def test_extract_boxed_number_is_strict(response, expected):
+def test_extract_boxed_number_uses_finite_float_syntax(response, expected):
     assert extract_boxed_number(response) == expected
 
 
 @pytest.mark.unit
-def test_last_complete_box_wins_even_when_later_box_is_incomplete():
-    assert extract_boxed_number(r"\boxed{1} text \boxed{2") == 1.0
+@pytest.mark.parametrize(
+    "response",
+    [
+        r"\boxed{1} text \boxed{2",
+        r"\boxed{1} text \boxed{not-a-number}",
+    ],
+)
+def test_malformed_rightmost_box_does_not_fall_back(response):
+    assert extract_boxed_number(response) is None
 
 
 @pytest.mark.unit
@@ -173,10 +179,10 @@ def test_training_hook_logs_rollout_and_maxrl_metrics():
 
 def _eval_samples() -> list[Sample]:
     groups = [
-        (0, 1.0, "Python", [1.0, 1.0, 1.0]),
-        (1, 2.0, "Python", [2.0, 2.0, 2.0]),
-        (2, 3.0, "Rust", [4.0, 4.0, 4.0]),
-        (3, 4.0, "Rust", [3.0, 3.0, 3.0]),
+        (0, 1.0, "Python", [1.0, 1.0]),
+        (1, 2.0, "Python", [2.0, 2.0]),
+        (2, 3.0, "Rust", [4.0, 4.0]),
+        (3, 4.0, "Rust", [3.0, 3.0]),
     ]
     samples = [
         _sample(
@@ -192,7 +198,7 @@ def _eval_samples() -> list[Sample]:
 
 
 @pytest.mark.unit
-def test_eval_hook_uses_prompt_medians_and_language_mean():
+def test_eval_hook_uses_even_group_medians_and_language_mean():
     log_dict = {}
 
     skip_default = log_eval_regression_metrics(

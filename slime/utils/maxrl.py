@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import dataclasses
-import math
 from collections import defaultdict
 from collections.abc import Hashable, Sequence
 
@@ -29,20 +28,14 @@ class MaxRLEstimatorConfig:
     """Configuration for the degree-D MaxRL leave-one-out estimator."""
 
     degree: int
-    log_sup_likelihood: float = 0.0
     subtract_baseline: bool = True
 
     def __post_init__(self) -> None:
         if self.degree < 1:
             raise ValueError(f"degree must be >= 1; got {self.degree}.")
-        if not math.isfinite(self.log_sup_likelihood):
-            raise ValueError(
-                "log_sup_likelihood must be finite; "
-                f"got {self.log_sup_likelihood}."
-            )
 
     def compute_score_weights(self, *, log_likelihoods: torch.Tensor) -> torch.Tensor:
-        """Return detached per-rollout coefficients for the MaxRL gradient."""
+        """Return coefficients from normalized log likelihoods bounded by zero."""
         if log_likelihoods.ndim != 2:
             raise ValueError(
                 "log_likelihoods must have shape [batch, rollout]; got "
@@ -63,22 +56,17 @@ class MaxRLEstimatorConfig:
             )
 
         with torch.no_grad():
-            normalized_ll = log_likelihoods - self.log_sup_likelihood
-            if torch.any(normalized_ll > 1e-6):
+            if torch.any(log_likelihoods > 1e-6):
                 raise ValueError(
-                    "normalized likelihood must be <= 1; "
-                    "a log likelihood exceeded log_sup_likelihood."
+                    "log_likelihoods must already be normalized and <= 0."
                 )
+            normalized_ll = log_likelihoods.clamp(max=0.0)
             sigma_effective = self._maybe_subtract_baseline(normalized_ll)
 
             if num_rollouts == 1:
                 return sigma_effective.type_as(log_likelihoods)
 
             complement_normalized_likelihood = -torch.expm1(normalized_ll)
-            if torch.any(complement_normalized_likelihood < -1e-6):
-                raise ValueError(
-                    "normalized likelihood must be <= 1; got a negative complement."
-                )
             complement_normalized_likelihood = complement_normalized_likelihood.clamp(
                 min=0.0
             )
@@ -147,7 +135,6 @@ def compute_grouped_maxrl_weights(
     *,
     group_size: int,
     degree: int,
-    log_sup_likelihood: float,
     subtract_baseline: bool,
 ) -> list[float]:
     """Compute MaxRL weights by explicit group id and restore input ordering."""
@@ -189,7 +176,6 @@ def compute_grouped_maxrl_weights(
     )
     config = MaxRLEstimatorConfig(
         degree=degree,
-        log_sup_likelihood=log_sup_likelihood,
         subtract_baseline=subtract_baseline,
     )
     grouped_weights = config.compute_score_weights(
