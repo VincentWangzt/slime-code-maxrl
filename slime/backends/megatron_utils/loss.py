@@ -28,6 +28,7 @@ from .cp_utils import (
     all_gather_with_cp,
     get_logits_and_tokens_offset_with_cp,
     get_sum_of_sample_mean,
+    get_sum_of_sample_sum,
     slice_log_prob_with_cp,
 )
 
@@ -664,9 +665,11 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch) 
     This function extracts rewards, log-probs, values, and masks from
     `rollout_data`, computes KL divergences, then applies the chosen advantage
     estimator. Supported methods: "grpo", "gspo", "cispo", "ppo",
-    "reinforce_plus_plus", and "reinforce_plus_plus_baseline". When
+    "reinforce_plus_plus", "reinforce_plus_plus_baseline", and "maxrl". When
     `args.normalize_advantages` is True, advantages are whitened across the
-    data-parallel group using masked statistics.
+    data-parallel group using masked statistics. MaxRL consumes precomputed
+    per-response coefficients and broadcasts each coefficient across that
+    response's tokens.
 
     Early returns if both `log_probs` and `values` are None (intermediate
     pipeline stages).
@@ -758,6 +761,14 @@ def compute_advantages_and_returns(args: Namespace, rollout_data: RolloutBatch) 
             loss_masks=loss_masks,
             kl_coef=args.kl_coef,
         )
+        returns = advantages
+
+    elif args.advantage_estimator == "maxrl":
+        weights = torch.tensor(rewards, dtype=torch.float32, device=kl[0].device)
+        advantages = [
+            torch.ones_like(sample_kl, dtype=torch.float32) * weight
+            for sample_kl, weight in zip(kl, weights, strict=True)
+        ]
         returns = advantages
 
     else:
@@ -975,7 +986,10 @@ def policy_loss_function(
         log_probs = torch.cat(log_probs, dim=0)
         ppo_kl = old_log_probs - log_probs
 
-    if args.advantage_estimator == "cispo":
+    if args.advantage_estimator == "maxrl":
+        pg_loss = -advantages * log_probs
+        pg_clipfrac = torch.zeros_like(pg_loss)
+    elif args.advantage_estimator == "cispo":
         pg_loss, pg_clipfrac = compute_cispo_loss(ppo_kl, log_probs, advantages, args.eps_clip, args.eps_clip_high)
     else:
         pg_loss, pg_clipfrac = compute_policy_loss(ppo_kl, advantages, args.eps_clip, args.eps_clip_high)
@@ -1029,7 +1043,13 @@ def policy_loss_function(
         )
 
     # Determine pg_loss reducer: use custom if specified, otherwise default
-    if getattr(args, "custom_pg_loss_reducer_function_path", None) is not None:
+    if args.advantage_estimator == "maxrl":
+        pg_loss_reducer = get_sum_of_sample_sum(
+            total_lengths,
+            response_lengths,
+            batch["loss_masks"],
+        )
+    elif getattr(args, "custom_pg_loss_reducer_function_path", None) is not None:
         custom_pg_loss_reducer_func = load_function(args.custom_pg_loss_reducer_function_path)
         # Determine which loss_masks to use for pg_loss reducer
         pg_loss_masks = modified_response_masks if (args.get_mismatch_metrics or args.use_tis) else batch["loss_masks"]

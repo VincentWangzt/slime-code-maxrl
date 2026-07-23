@@ -26,6 +26,7 @@ import torch
 from slime.backends.megatron_utils.cp_utils import (  # noqa: E402
     get_logits_and_tokens_offset_with_cp,
     get_sum_of_sample_mean,
+    get_sum_of_sample_sum,
 )
 
 
@@ -59,6 +60,96 @@ def test_default_reduces_to_per_sample_mean():
     x = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
     # per-sample means: 2, 5, 8 → sum = 15
     assert reducer(x).item() == pytest.approx(15.0)
+
+
+@pytest.mark.unit
+def test_sample_sum_matches_direct_maxrl_objective_and_gradient(monkeypatch):
+    """MaxRL sums each sequence before the outer response-count average."""
+    from megatron.core import mpu as _mpu
+
+    monkeypatch.setattr(_mpu, "get_context_parallel_world_size", lambda: 1)
+    total_lengths, response_lengths, loss_masks = _make_inputs([2, 3])
+    log_probs = torch.tensor(
+        [-0.2, -0.4, -0.1, -0.3, -0.5],
+        dtype=torch.float64,
+        requires_grad=True,
+    )
+    coefficients = torch.tensor([0.5, -1.25], dtype=torch.float64)
+    token_coefficients = torch.repeat_interleave(
+        coefficients, torch.tensor(response_lengths)
+    )
+    reducer = get_sum_of_sample_sum(
+        total_lengths, response_lengths, loss_masks
+    )
+
+    actual = reducer(-token_coefficients * log_probs) / len(response_lengths)
+    expected = -(
+        coefficients[0] * log_probs[:2].sum()
+        + coefficients[1] * log_probs[2:].sum()
+    ) / 2
+    actual_gradient = torch.autograd.grad(
+        actual, log_probs, retain_graph=True
+    )[0]
+    expected_gradient = torch.autograd.grad(expected, log_probs)[0]
+
+    assert actual.item() == pytest.approx(expected.item())
+    assert torch.equal(actual_gradient, expected_gradient)
+
+
+@pytest.mark.unit
+def test_sample_sum_is_context_parallel_invariant(monkeypatch):
+    from megatron.core import mpu as _mpu
+
+    total_lengths = [12, 12]
+    response_lengths = [8, 8]
+    loss_masks = [
+        torch.tensor([1, 1, 0, 1, 1, 0, 1, 1], dtype=torch.float32),
+        torch.ones(8, dtype=torch.float32),
+    ]
+    full_values = [
+        torch.arange(1, 9, dtype=torch.float32),
+        torch.arange(11, 19, dtype=torch.float32),
+    ]
+
+    monkeypatch.setattr(_mpu, "get_context_parallel_world_size", lambda: 1)
+    baseline = get_sum_of_sample_sum(
+        total_lengths, response_lengths, loss_masks
+    )(torch.cat(full_values))
+
+    monkeypatch.setattr(_mpu, "get_context_parallel_world_size", lambda: 2)
+    cp_total = 0.0
+    for cp_rank in range(2):
+        monkeypatch.setattr(
+            _mpu, "get_context_parallel_rank", lambda rank=cp_rank: rank
+        )
+        local_values = []
+        for total_length, response_length, values in zip(
+            total_lengths, response_lengths, full_values, strict=True
+        ):
+            prompt_length = total_length - response_length
+            _, _, _, token_offsets = get_logits_and_tokens_offset_with_cp(
+                total_length, response_length
+            )
+            local_values.extend(
+                [
+                    values[
+                        token_offsets[0][0]
+                        - prompt_length : token_offsets[0][1]
+                        - prompt_length
+                    ],
+                    values[
+                        token_offsets[1][0]
+                        - prompt_length : token_offsets[1][1]
+                        - prompt_length
+                    ],
+                ]
+            )
+        reducer = get_sum_of_sample_sum(
+            total_lengths, response_lengths, loss_masks
+        )
+        cp_total += reducer(torch.cat(local_values)).item()
+
+    assert cp_total == pytest.approx(baseline.item())
 
 
 @pytest.mark.unit

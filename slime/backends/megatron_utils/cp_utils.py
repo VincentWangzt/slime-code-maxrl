@@ -124,6 +124,25 @@ def get_sum_of_sample_mean(
     return sum_of_sample_mean if not calculate_per_token_loss else sum_of_token
 
 
+def get_sum_of_sample_sum(
+    total_lengths: list[int],
+    response_lengths: list[int],
+    loss_masks: list[torch.Tensor],
+) -> Callable[[torch.Tensor], torch.Tensor]:
+    """Return a CP-aware reducer that sums tokens separately for every sample."""
+    sample_denoms = [
+        torch.ones((), dtype=torch.float32, device=loss_mask.device)
+        for loss_mask in loss_masks
+    ]
+    return get_sum_of_sample_mean(
+        total_lengths,
+        response_lengths,
+        loss_masks,
+        sample_denoms,
+        calculate_per_token_loss=False,
+    )
+
+
 def reduce_train_step_metrics(
     losses_reduced: list[dict],
     *,

@@ -24,6 +24,7 @@ from slime.utils.dp_schedule import build_dp_schedule
 from slime.utils.health_monitor import RolloutHealthMonitor
 from slime.utils.http_utils import _wrap_ipv6, find_available_port, get_host_info, init_http_client
 from slime.utils.logging_utils import configure_logger, init_tracking
+from slime.utils.maxrl import compute_grouped_maxrl_weights
 from slime.utils.metric_utils import compute_pass_rate, compute_rollout_step, compute_statistics, dict_add_prefix
 from slime.utils.misc import Box, group_by, load_function
 from slime.utils.types import Sample
@@ -69,6 +70,37 @@ _SGLANG_DECODE_PERF_FIELDS = (
     ("decode/transfer_duration", "pd_decode_transfer_duration"),
     ("decode/forward_duration", "pd_decode_forward_duration"),
 )
+
+
+def _compute_maxrl_weights(args, samples: list[Sample], raw_rewards: list[float]) -> list[float]:
+    return compute_grouped_maxrl_weights(
+        raw_rewards,
+        [sample.group_index for sample in samples],
+        group_size=args.n_samples_per_prompt,
+        degree=args.maxrl_degree,
+        log_sup_likelihood=args.maxrl_log_sup_likelihood,
+        subtract_baseline=args.maxrl_subtract_baseline,
+    )
+
+
+def _validate_maxrl_rollout_ids(args, rollout_ids: list[int]) -> None:
+    if args.advantage_estimator == "maxrl" and len(set(rollout_ids)) != len(rollout_ids):
+        raise ValueError(
+            "MaxRL requires a unique rollout_id for every generated response "
+            "so the sequence-level objective is averaged over responses."
+        )
+
+
+def _validate_maxrl_sample_loss_mask(args, sample: Sample) -> None:
+    if args.advantage_estimator != "maxrl":
+        return
+    if sample.response_length <= 0:
+        raise ValueError("MaxRL requires every generated response to contain at least one token.")
+    if sample.remove_sample or any(mask_value != 1 for mask_value in sample.loss_mask):
+        raise ValueError(
+            "MaxRL requires every response token to remain in the loss mask; "
+            "response-level filtering changes the sequence policy-gradient objective."
+        )
 
 
 def _cpu_tensor(value, dtype: torch.dtype | None = None) -> torch.Tensor:
@@ -684,6 +716,10 @@ class RolloutManager:
             return self.custom_reward_post_process_func(self.args, samples)
 
         raw_rewards = [sample.get_reward_value(self.args) for sample in samples]
+        if self.args.advantage_estimator == "maxrl":
+            weights = _compute_maxrl_weights(self.args, samples, raw_rewards)
+            return raw_rewards, weights
+
         if (
             self.args.advantage_estimator in ["grpo", "gspo", "cispo", "reinforce_plus_plus_baseline"]
             and self.args.rewards_normalization
@@ -728,6 +764,8 @@ class RolloutManager:
                 rollout_ids[i] = tmp_id
                 existed_rollout_id_values.add(tmp_id)
 
+        _validate_maxrl_rollout_ids(self.args, rollout_ids)
+
         train_data = {
             "tokens": [sample.tokens for sample in samples],
             "response_lengths": [sample.response_length for sample in samples],
@@ -751,6 +789,7 @@ class RolloutManager:
             assert (
                 len(sample.loss_mask) == sample.response_length
             ), f"loss mask length {len(sample.loss_mask)} != response length {sample.response_length}"
+            _validate_maxrl_sample_loss_mask(self.args, sample)
             if sample.remove_sample:
                 sample.loss_mask = [0] * sample.response_length
             loss_masks.append(sample.loss_mask)
@@ -1257,12 +1296,13 @@ def _resolve_sglang_config(args) -> SglangConfig:
 
 
 def _log_eval_rollout_data(rollout_id, args, data, extra_metrics: dict[str, Any] | None = None):
+    extra_metrics = {**(extra_metrics or {})}
     if args.custom_eval_rollout_log_function_path is not None:
         custom_log_func = load_function(args.custom_eval_rollout_log_function_path)
         if custom_log_func(rollout_id, args, data, extra_metrics):
             return
 
-    log_dict = extra_metrics or {}
+    log_dict = extra_metrics
     for key in data.keys():
         rewards = data[key]["rewards"]
         log_dict[f"eval/{key}"] = sum(rewards) / len(rewards)
@@ -1290,6 +1330,7 @@ def _log_eval_rollout_data(rollout_id, args, data, extra_metrics: dict[str, Any]
 
 
 def _log_rollout_data(rollout_id, args, samples, rollout_extra_metrics, rollout_time):
+    rollout_extra_metrics = {**(rollout_extra_metrics or {})}
     if args.custom_rollout_log_function_path is not None:
         custom_log_func = load_function(args.custom_rollout_log_function_path)
         if custom_log_func(rollout_id, args, samples, rollout_extra_metrics, rollout_time):
@@ -1298,7 +1339,7 @@ def _log_rollout_data(rollout_id, args, samples, rollout_extra_metrics, rollout_
     if args.load_debug_rollout_data:
         return
 
-    log_dict = {**(rollout_extra_metrics or {})}
+    log_dict = rollout_extra_metrics
     log_dict |= dict_add_prefix(compute_metrics_from_samples(args, samples), "rollout/")
     log_dict |= dict_add_prefix(compute_perf_metrics_from_samples(args, samples, rollout_time), "perf/")
     logger.info(f"perf {rollout_id}: {log_dict}")
