@@ -20,7 +20,9 @@ NUM_GPUS = 0
 def test_maxrl_advantages_broadcast_response_coefficients(monkeypatch):
     from megatron.core import mpu
 
-    monkeypatch.setattr(mpu, "is_pipeline_last_stage", lambda: True)
+    monkeypatch.setattr(
+        mpu, "is_pipeline_last_stage", lambda: True, raising=False
+    )
     args = types.SimpleNamespace(
         use_rollout_logprobs=False,
         kl_coef=0.0,
