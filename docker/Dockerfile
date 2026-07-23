@@ -7,7 +7,11 @@ ARG PATCH_VERSION=latest
 ARG MEGATRON_COMMIT=1dcf0dafa884ad52ffb243625717a3471643e087
 
 ARG ENABLE_CUDA_13=0
-ARG TMS_CUDA_MAJOR=
+ARG TMS_CUDA_MAJOR
+ARG FLASH_ATTN_MAX_BUILD_JOBS=64
+ARG FLASH_ATTN_HOPPER_MAX_BUILD_JOBS=96
+ARG APEX_MAX_BUILD_JOBS=8
+ARG APEX_NVCC_THREADS=4
 
 # ======================================== Setup =============================================
 
@@ -25,14 +29,16 @@ RUN apt install -y nvtop rsync dnsutils prometheus
 RUN pip uninstall -y flash-attn-4 flash_attn_4 || true
 
 # The compilation is slow, thus should be put at top
-RUN MAX_JOBS=64 pip -v install flash-attn==2.8.3 --no-build-isolation
+RUN MAX_JOBS=${FLASH_ATTN_MAX_BUILD_JOBS} \
+    pip -v install flash-attn==2.8.3 --no-build-isolation
 
 # The compilation is slow, thus should be put at top.  This FA3 commit uses the
 # window_size_left/window_size_right API required by TransformerEngine 2.16 CP.
 RUN git clone https://github.com/Dao-AILab/flash-attention.git && \
     cd flash-attention/ && git checkout 002cce0a1068f8c07dfccb5a1d232b9a3276947c && git submodule update --init && \
     cd hopper/ && \
-    FLASH_ATTENTION_FORCE_BUILD=TRUE MAX_JOBS=96 pip -v install . --no-build-isolation && \
+    FLASH_ATTENTION_FORCE_BUILD=TRUE MAX_JOBS=${FLASH_ATTN_HOPPER_MAX_BUILD_JOBS} \
+      pip -v install . --no-build-isolation && \
     cd /root/ && rm -rf flash-attention/
 
 RUN pip install git+https://github.com/ISEEKYAN/mbridge.git@89eb10887887bc74853f89a4de258c0702932a1c --no-deps
@@ -50,10 +56,10 @@ RUN if [ "${ENABLE_CUDA_13}" = "1" ]; then \
       pip -v install --no-build-isolation "transformer_engine[pytorch]==2.16.1"; \
     fi
 
-RUN NVCC_APPEND_FLAGS="--threads 4" \
+RUN NVCC_APPEND_FLAGS="--threads ${APEX_NVCC_THREADS}" \
   pip -v install --disable-pip-version-check --no-cache-dir \
   --no-build-isolation \
-  --config-settings "--build-option=--cpp_ext --cuda_ext --parallel 8" git+https://github.com/NVIDIA/apex.git@10417aceddd7d5d05d7cbf7b0fc2daad1105f8b4
+  --config-settings "--build-option=--cpp_ext --cuda_ext --parallel ${APEX_MAX_BUILD_JOBS}" git+https://github.com/NVIDIA/apex.git@10417aceddd7d5d05d7cbf7b0fc2daad1105f8b4
 
 RUN git clone https://github.com/NVIDIA/Megatron-LM.git --recursive && \
     cd Megatron-LM && git checkout ${MEGATRON_COMMIT} && \
@@ -90,8 +96,9 @@ RUN rm -rf /root/.cache/pip /root/flash-attention
 
 # ====================================== Patches ============================================
 
-COPY docker/patch/${PATCH_VERSION}/megatron.patch /root/Megatron-LM/
-RUN cd Megatron-LM && \
+COPY docker/patch/ /tmp/slime-patches/
+RUN cp "/tmp/slime-patches/${PATCH_VERSION}/megatron.patch" /root/Megatron-LM/ && \
+    cd /root/Megatron-LM && \
     git update-index --refresh && \
     git apply megatron.patch --3way && \
     if grep -R -n '^<<<<<<< ' .; then \
@@ -102,15 +109,11 @@ RUN cd Megatron-LM && \
 
 # TODO temporarily skip patching for GB200/GB300 (and require users to bring their own sglang version). should add back later.
 ARG ENABLE_SGLANG_PATCH=1
-COPY docker/patch/${PATCH_VERSION}/sglang.patch \
-     docker/patch/${PATCH_VERSION}/sglang-top_p.patch \
-     docker/patch/${PATCH_VERSION}/sglang-release_hicache.patch \
-     docker/patch/${PATCH_VERSION}/sglang-pull_weights.patch \
-     /sgl-workspace/sglang/
 RUN if [ "$ENABLE_SGLANG_PATCH" = "1" ]; then \
   cd /sgl-workspace/sglang && \
   git update-index --refresh && \
   for patch in sglang.patch sglang-top_p.patch sglang-release_hicache.patch sglang-pull_weights.patch; do \
+    cp "/tmp/slime-patches/${PATCH_VERSION}/${patch}" . || exit 1; \
     git apply --3way "$patch" || exit 1; \
     if git grep -n '^<<<<<<< ' -- .; then \
       echo "Patch failed to apply cleanly. Please resolve conflicts." && \
@@ -118,7 +121,8 @@ RUN if [ "$ENABLE_SGLANG_PATCH" = "1" ]; then \
     fi; \
   done && \
   rm sglang.patch sglang-top_p.patch sglang-release_hicache.patch sglang-pull_weights.patch; \
-fi
+fi && \
+rm -rf /tmp/slime-patches
 
 # ====================================== Install main package ============================================
 
