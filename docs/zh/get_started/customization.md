@@ -363,6 +363,9 @@ def log_rollout_data(rollout_id, args, samples, rollout_extra_metrics, rollout_t
 
 **返回值**: `True` 跳过默认日志，`False` 继续默认日志。
 
+`rollout_extra_metrics` 始终是可变字典；钩子写入的指标会在返回 `False`
+并继续默认日志时保留下来。
+
 #### 评估 Rollout 日志 (`--custom-eval-rollout-log-function-path`)
 
 **函数签名**:
@@ -371,6 +374,9 @@ def log_eval_rollout_data(rollout_id, args, data, extra_metrics) -> bool
 ```
 
 **返回值**: `True` 跳过默认日志，`False` 继续默认日志。
+
+`extra_metrics` 始终是可变字典；钩子写入的指标会在返回 `False`
+并继续默认日志时保留下来。
 
 ---
 

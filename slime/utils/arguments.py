@@ -2,6 +2,7 @@ import argparse
 import copy
 import json
 import logging
+import math
 import os
 from typing import Any
 
@@ -813,7 +814,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument(
                 "--n-samples-per-eval-prompt",
                 type=int,
-                default=1,
+                default=None,
                 help="number of responses for each prompt in generation",
             )
             parser.add_argument("--eval-temperature", type=float, default=None)
@@ -937,12 +938,40 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                     "reinforce_plus_plus",
                     "reinforce_plus_plus_baseline",
                     "ppo",
+                    "maxrl",
                 ],
                 default="grpo",
                 help=(
                     "Advantage estimator to use. Note: on-policy distillation (OPD) is now orthogonal "
                     "to the advantage estimator. Use --opd-kl-coef > 0 to enable OPD on top of any estimator."
                 ),
+            )
+            parser.add_argument(
+                "--maxrl-degree",
+                type=int,
+                default=None,
+                help=(
+                    "Degree of the MaxRL leave-one-out estimator. "
+                    "Defaults to --n-samples-per-prompt."
+                ),
+            )
+            parser.add_argument(
+                "--maxrl-log-sup-likelihood",
+                type=float,
+                default=0.0,
+                help="Log of the likelihood supremum used to normalize MaxRL scores.",
+            )
+            parser.add_argument(
+                "--maxrl-score-std",
+                type=float,
+                default=1.0,
+                help="Gaussian score standard deviation used by the regression MaxRL reward hook.",
+            )
+            parser.add_argument(
+                "--disable-maxrl-baseline",
+                action="store_false",
+                dest="maxrl_subtract_baseline",
+                help="Disable the leave-one-out baseline in the MaxRL estimator.",
             )
             parser.add_argument(
                 "--disable-compute-advantages-and-returns",
@@ -1712,7 +1741,92 @@ def _resolve_eval_datasets(args) -> list[EvalDatasetConfig]:
     return eval_datasets
 
 
+def _validate_maxrl_args(args) -> None:
+    if args.advantage_estimator != "maxrl":
+        return
+
+    if args.n_samples_per_prompt < 2:
+        raise ValueError("MaxRL requires --n-samples-per-prompt >= 2.")
+
+    if args.maxrl_degree is None:
+        args.maxrl_degree = args.n_samples_per_prompt
+    if not 1 <= args.maxrl_degree <= args.n_samples_per_prompt:
+        raise ValueError(
+            "--maxrl-degree must be between 1 and --n-samples-per-prompt; "
+            f"got {args.maxrl_degree} and {args.n_samples_per_prompt}."
+        )
+    if not math.isfinite(args.maxrl_log_sup_likelihood):
+        raise ValueError("--maxrl-log-sup-likelihood must be finite.")
+    if not math.isfinite(args.maxrl_score_std) or args.maxrl_score_std <= 0:
+        raise ValueError("--maxrl-score-std must be positive and finite.")
+
+    if args.n_samples_per_eval_prompt <= 0 or args.n_samples_per_eval_prompt % 2 == 0:
+        raise ValueError(
+            "MaxRL requires --n-samples-per-eval-prompt to be a positive odd integer."
+        )
+    invalid_eval_datasets = [
+        dataset.name
+        for dataset in args.eval_datasets
+        if dataset.n_samples_per_eval_prompt is None
+        or dataset.n_samples_per_eval_prompt <= 0
+        or dataset.n_samples_per_eval_prompt % 2 == 0
+    ]
+    if invalid_eval_datasets:
+        raise ValueError(
+            "MaxRL requires a positive odd n_samples_per_eval_prompt for every "
+            f"eval dataset; invalid datasets: {invalid_eval_datasets}."
+        )
+    if not args.rollout_shuffle:
+        raise ValueError("MaxRL requires --rollout-shuffle.")
+
+    expected_global_batch_size = (
+        args.rollout_batch_size * args.n_samples_per_prompt
+    )
+    if args.num_steps_per_rollout not in (None, 1):
+        raise ValueError("MaxRL requires exactly one optimizer step per rollout.")
+    if args.global_batch_size != expected_global_batch_size:
+        raise ValueError(
+            "MaxRL requires --global-batch-size == "
+            "--rollout-batch-size * --n-samples-per-prompt; "
+            f"expected {expected_global_batch_size}, got {args.global_batch_size}."
+        )
+
+    incompatible_options = {
+        "--normalize-advantages": args.normalize_advantages,
+        "--calculate-per-token-loss": args.calculate_per_token_loss,
+        "--use-opd": args.use_opd,
+        "--use-tis": args.use_tis,
+        "--get-mismatch-metrics": args.get_mismatch_metrics,
+        "--use-opsm": args.use_opsm,
+        "--custom-reward-post-process-path": (
+            args.custom_reward_post_process_path is not None
+        ),
+        "--custom-advantage-function-path": (
+            args.custom_advantage_function_path is not None
+        ),
+        "--custom-pg-loss-reducer-function-path": (
+            args.custom_pg_loss_reducer_function_path is not None
+        ),
+    }
+    enabled = [name for name, is_enabled in incompatible_options.items() if is_enabled]
+    if enabled:
+        raise ValueError(
+            "MaxRL does not support options that alter its policy-gradient "
+            f"estimator: {', '.join(enabled)}."
+        )
+    if args.kl_coef != 0:
+        raise ValueError("MaxRL does not support reward-side KL shaping; set --kl-coef 0.")
+    if args.loss_type != "policy_loss":
+        raise ValueError("MaxRL requires --loss-type policy_loss.")
+    if not args.compute_advantages_and_returns:
+        raise ValueError("MaxRL requires advantage computation to remain enabled.")
+
+
 def slime_validate_args(args):
+    if args.n_samples_per_eval_prompt is None:
+        args.n_samples_per_eval_prompt = (
+            65 if args.advantage_estimator == "maxrl" else 1
+        )
     args.eval_datasets = _resolve_eval_datasets(args)
 
     if args.kl_coef != 0 or args.use_kl_loss:
@@ -1962,6 +2076,8 @@ def slime_validate_args(args):
             if hasattr(args, k):
                 logger.info(f"Warning: Argument {k} is already set to {getattr(args, k)}, will override with {v}.")
             setattr(args, k, v)
+
+    _validate_maxrl_args(args)
 
     if args.eval_max_context_len is None:
         logger.info(

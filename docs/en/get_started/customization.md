@@ -363,6 +363,9 @@ def log_rollout_data(rollout_id, args, samples, rollout_extra_metrics, rollout_t
 
 **Return**: `True` to skip default logging, `False` to continue with default logging.
 
+`rollout_extra_metrics` is always a mutable dictionary; entries added by the
+hook are retained when `False` continues into default logging.
+
 #### Evaluation Rollout Logging (`--custom-eval-rollout-log-function-path`)
 
 **Signature**:
@@ -371,6 +374,9 @@ def log_eval_rollout_data(rollout_id, args, data, extra_metrics) -> bool
 ```
 
 **Return**: `True` to skip default logging, `False` to continue with default logging.
+
+`extra_metrics` is always a mutable dictionary; entries added by the hook are
+retained when `False` continues into default logging.
 
 ---
 

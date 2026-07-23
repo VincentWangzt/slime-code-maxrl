@@ -180,6 +180,7 @@ def make_slime_validate_args(**overrides):
     values = dict(
         eval_config=None,
         eval_prompt_data=None,
+        eval_datasets=[],
         kl_coef=0,
         use_kl_loss=False,
         ref_load=None,
@@ -200,11 +201,22 @@ def make_slime_validate_args(**overrides):
         save=None,
         kl_loss_coef=0,
         advantage_estimator="grpo",
+        maxrl_degree=None,
+        maxrl_log_sup_likelihood=0.0,
+        maxrl_score_std=1.0,
+        maxrl_subtract_baseline=True,
         normalize_advantages=False,
+        calculate_per_token_loss=False,
         use_rollout_logprobs=False,
         use_tis=False,
+        use_opsm=False,
         get_mismatch_metrics=False,
         custom_tis_function_path=None,
+        custom_reward_post_process_path=None,
+        custom_advantage_function_path=None,
+        custom_pg_loss_reducer_function_path=None,
+        loss_type="policy_loss",
+        compute_advantages_and_returns=True,
         use_dynamic_batch_size=False,
         max_tokens_per_gpu=None,
         log_probs_max_tokens_per_gpu=None,
@@ -234,7 +246,9 @@ def make_slime_validate_args(**overrides):
         num_steps_per_rollout=None,
         rollout_batch_size=1,
         n_samples_per_prompt=1,
+        n_samples_per_eval_prompt=1,
         global_batch_size=None,
+        rollout_shuffle=False,
         grpo_std_normalization=True,
         over_sampling_batch_size=None,
         num_epoch=None,
@@ -260,6 +274,86 @@ def make_slime_validate_args(**overrides):
     )
     values.update(overrides)
     return types.SimpleNamespace(**values)
+
+
+@pytest.mark.unit
+def test_maxrl_resolves_degree_and_eval_rollout_default(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    args = make_slime_validate_args(
+        advantage_estimator="maxrl",
+        rollout_batch_size=2,
+        n_samples_per_prompt=4,
+        n_samples_per_eval_prompt=None,
+        global_batch_size=8,
+        rollout_shuffle=True,
+    )
+
+    module.slime_validate_args(args)
+
+    assert args.maxrl_degree == 4
+    assert args.n_samples_per_eval_prompt == 65
+
+
+@pytest.mark.unit
+def test_non_maxrl_preserves_single_eval_rollout_default(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    args = make_slime_validate_args(n_samples_per_eval_prompt=None)
+
+    module.slime_validate_args(args)
+
+    assert args.n_samples_per_eval_prompt == 1
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"n_samples_per_prompt": 1}, "n-samples-per-prompt"),
+        ({"maxrl_degree": 5}, "maxrl-degree"),
+        ({"maxrl_score_std": 0.0}, "score-std"),
+        ({"n_samples_per_eval_prompt": 4}, "positive odd"),
+        ({"rollout_shuffle": False}, "rollout-shuffle"),
+        ({"global_batch_size": 3}, "global-batch-size"),
+        ({"num_steps_per_rollout": 2}, "one optimizer step"),
+        ({"normalize_advantages": True}, "normalize-advantages"),
+        ({"calculate_per_token_loss": True}, "calculate-per-token-loss"),
+        ({"use_opd": True}, "use-opd"),
+        ({"use_tis": True}, "use-tis"),
+        ({"get_mismatch_metrics": True}, "get-mismatch-metrics"),
+        ({"use_opsm": True}, "use-opsm"),
+        (
+            {"custom_reward_post_process_path": "custom.reward"},
+            "custom-reward-post-process-path",
+        ),
+        (
+            {"custom_advantage_function_path": "custom.advantage"},
+            "custom-advantage-function-path",
+        ),
+        (
+            {"custom_pg_loss_reducer_function_path": "custom.reducer"},
+            "custom-pg-loss-reducer-function-path",
+        ),
+        ({"kl_coef": 0.1}, "reward-side KL"),
+        ({"loss_type": "custom_loss"}, "policy_loss"),
+        ({"compute_advantages_and_returns": False}, "advantage computation"),
+    ],
+)
+def test_maxrl_rejects_incompatible_options(monkeypatch, overrides, message):
+    module = load_slime_arguments_module(monkeypatch)
+    values = {
+        "advantage_estimator": "maxrl",
+        "rollout_batch_size": 2,
+        "n_samples_per_prompt": 2,
+        "n_samples_per_eval_prompt": 65,
+        "global_batch_size": 4,
+        "rollout_shuffle": True,
+        "maxrl_degree": 2,
+    }
+    values.update(overrides)
+    args = make_slime_validate_args(**values)
+
+    with pytest.raises(ValueError, match=message):
+        module._validate_maxrl_args(args)
 
 
 @pytest.mark.unit

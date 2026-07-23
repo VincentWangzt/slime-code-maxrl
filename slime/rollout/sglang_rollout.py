@@ -563,6 +563,7 @@ async def eval_rollout_single_dataset(
             # use the same prompt for multiple samples
             sample = copy.deepcopy(prompt_sample)
             sample.index = sample_index
+            sample.group_index = _i
             sample_index += 1
             sample.metadata = dataset_cfg.inject_metadata(getattr(sample, "metadata", None))
             sample.custom_rm_path = dataset_cfg.custom_rm_path
