@@ -4,7 +4,6 @@ Use the first-class estimator with the boxed-number reward and metric hooks:
 
 ```text
 --advantage-estimator maxrl
---rollout-shuffle
 --n-samples-per-prompt <N>
 --global-batch-size <rollout-batch-size-times-N>
 --custom-rm-path slime_plugins.maxrl.regression.boxed_gaussian_reward
@@ -35,3 +34,8 @@ and one evaluation sample per prompt. For a 65-sample CDSS median evaluation,
 set `--n-samples-per-eval-prompt 65` explicitly (globally or in the CDSS eval
 dataset configuration). The logging hooks and `--eval-reward-key maxrl_score`
 shown above are recommended, but are not validation requirements.
+
+The launcher uses Slime's existing `--message-processor` interface to load
+`prompts/code_regression.yaml`, prefix-truncate code to 2,048 model tokens,
+apply the model chat template, and fail if the rendered prompt exceeds 3,072
+tokens. The top-level `prompts/` directory is cached in the Modal image.

@@ -9,11 +9,12 @@ consume `--modal-gpu-count` and forward every other argument unchanged to the co
 The examples retain `--` as a recommended boundary so Modal does not consume Slime options such as
 `--help`; Modal removes that marker before invoking the local entrypoint.
 
-The cached image contains the root trainers plus `slime/` and `slime_plugins/`. It excludes
-`scripts/`, which Modal uploads at container startup and mounts at `/root/slime/scripts` without
-rebuilding the image. `_app.py` owns local image and resource configuration; `_runtime.py` is
-imported remotely from that mounted tree with Modal's automatic source inclusion disabled.
-`command_modal.py` uses the same image and persistent Volume for one-off commands.
+The cached image contains the root trainers plus the explicitly selected `examples/`, `slime/`,
+`slime_plugins/`, `tests/`, `tools/`, and `prompts/` directories. `scripts/` is the only repository
+tree uploaded at container startup, where it is mounted at `/root/slime/scripts` without rebuilding
+the image. `_app.py` owns local image and resource configuration; `_runtime.py` is imported remotely
+from that mounted tree with Modal's automatic source inclusion disabled. `command_modal.py` uses the
+same image and persistent Volume for one-off commands.
 
 ## Local environment
 
@@ -84,6 +85,18 @@ The Qwen example commands above create:
 ```
 
 For another model, use a distinct Hugging Face directory and conversion output directory, and source the corresponding file under `scripts/models/` (or provide the correct Megatron model arguments directly). Training should pass the downloaded directory to `--hf-checkpoint`, the converted directory to `--ref-load`, and the downloaded JSONL file to `--prompt-data`.
+
+## Qwen3-4B CDSS MaxRL
+
+Run MaxRL on code regression datasets with Qwen3-4B-Instruct-2507:
+
+```bash
+uv run --project scripts/modal bash scripts/modal/examples/run-qwen3-4B-Instruct-2507-cdss-maxrl.sh
+```
+
+The launcher enables W&B project `maxrl-code-regression`. `WANDB_RUN_NAME` in the launcher is used
+as both the exact W&B run name and the checkpoint directory name under `/data/checkpoints`; the
+runtime environment must provide `WANDB_API_KEY`.
 
 ## Run the examples
 

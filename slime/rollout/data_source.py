@@ -68,6 +68,7 @@ class RolloutDataSource(DataSource):
                 if processor:
                     processor.save_pretrained(Path(d) / "processor")
 
+            message_processor = getattr(args, "message_processor", None)
             self.dataset = Dataset(
                 args.prompt_data,
                 tokenizer=tokenizer,
@@ -80,6 +81,8 @@ class RolloutDataSource(DataSource):
                 tool_key=args.tool_key,
                 apply_chat_template=args.apply_chat_template,
                 apply_chat_template_kwargs=args.apply_chat_template_kwargs,
+                message_processor=message_processor,
+                fail_on_long_prompt=message_processor is not None,
                 seed=args.rollout_seed,
             )
             if self.args.rollout_shuffle:

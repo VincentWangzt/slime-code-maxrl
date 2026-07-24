@@ -14,6 +14,7 @@ from slime.utils.maxrl import compute_grouped_maxrl_weights
 from slime.utils.types import Sample
 
 _OBSERVATION_METADATA_KEY = "maxrl_regression"
+_WANDB_TABLE_ROW_LIMIT = 32
 
 
 def extract_boxed_number(response: str | None) -> float | None:
@@ -164,6 +165,59 @@ def _observation_for_logging(args: Any, sample: Sample) -> dict[str, Any]:
     return _score_observation(args, sample)
 
 
+def _log_wandb_sample_table(
+    args: Any,
+    *,
+    key: str,
+    samples: Sequence[Sample],
+) -> None:
+    if not getattr(args, "use_wandb", False):
+        return
+
+    import wandb
+
+    if wandb.run is None:
+        return
+    prompt_yaml = getattr(args, "code_regression_prompt_yaml", None)
+    if isinstance(prompt_yaml, str):
+        wandb.config.update(
+            {"code_regression_prompt_yaml": prompt_yaml},
+            allow_val_change=True,
+        )
+
+    table = wandb.Table(
+        columns=[
+            "prompt",
+            "response",
+            "target",
+            "prediction",
+            "score",
+            "language",
+            "identifier",
+        ]
+    )
+    ordered = sorted(
+        samples,
+        key=lambda sample: (
+            sample.index is None,
+            sample.index if sample.index is not None else 0,
+        ),
+    )
+    for sample in ordered[:_WANDB_TABLE_ROW_LIMIT]:
+        observation = _observation_for_logging(args, sample)
+        metadata = sample.metadata if isinstance(sample.metadata, dict) else {}
+        table.add_data(
+            sample.prompt,
+            sample.response,
+            observation["target"],
+            observation["prediction"],
+            observation["score"],
+            observation["language"],
+            metadata.get("identifier"),
+        )
+    wandb.log({key: table})
+
+
 def log_train_regression_metrics(
     rollout_id: int,
     args: Any,
@@ -172,7 +226,7 @@ def log_train_regression_metrics(
     rollout_time: float,
 ) -> bool:
     """Augment Slime's default rollout metrics with MaxRL regression metrics."""
-    del rollout_id, rollout_time
+    del rollout_time
     observations = [_observation_for_logging(args, sample) for sample in samples]
     valid_pairs = [
         (observation["target"], observation["prediction"])
@@ -237,6 +291,12 @@ def log_train_regression_metrics(
     log_dict["rollout/maxrl/coefficient_abs_mean"] = (
         float(np.abs(weights).mean()) if weights.size else float("nan")
     )
+    if rollout_id == 0 or (rollout_id + 1) % 10 == 0:
+        _log_wandb_sample_table(
+            args,
+            key="rollout/code_regression_samples",
+            samples=samples,
+        )
     return False
 
 
@@ -296,7 +356,6 @@ def log_eval_regression_metrics(
     log_dict: dict[str, Any],
 ) -> bool:
     """Augment Slime eval logging with CDSS median regression metrics."""
-    del rollout_id
     if "CDSS" not in data:
         raise ValueError("The CDSS regression eval hook requires a dataset named 'CDSS'.")
     samples = data["CDSS"].get("samples")
@@ -354,5 +413,10 @@ def log_eval_regression_metrics(
         float(np.mean(language_spearman))
         if language_spearman
         else float("nan")
+    )
+    _log_wandb_sample_table(
+        args,
+        key=f"eval/code_regression_samples/rollout_{rollout_id}",
+        samples=samples,
     )
     return False

@@ -286,7 +286,7 @@ def test_maxrl_resolves_degree_and_eval_rollout_default(monkeypatch):
         n_samples_per_prompt=4,
         n_samples_per_eval_prompt=None,
         global_batch_size=8,
-        rollout_shuffle=True,
+        rollout_shuffle=False,
         custom_rm_path="slime_plugins.maxrl.regression.boxed_gaussian_reward",
         reward_key="maxrl_log_likelihood",
     )
@@ -318,7 +318,6 @@ def test_non_maxrl_preserves_single_eval_rollout_default(monkeypatch):
         ({"reward_key": "reward"}, "reward-key"),
         ({"group_rm": True}, "per-sample rewards"),
         ({"n_samples_per_eval_prompt": 0}, "positive"),
-        ({"rollout_shuffle": False}, "rollout-shuffle"),
         ({"global_batch_size": 3}, "global-batch-size"),
         ({"num_steps_per_rollout": 2}, "one optimizer step"),
         ({"normalize_advantages": True}, "normalize-advantages"),
@@ -379,6 +378,24 @@ def test_maxrl_accepts_positive_even_eval_counts(monkeypatch):
                 n_samples_per_eval_prompt=4,
             )
         ],
+        global_batch_size=4,
+        rollout_shuffle=True,
+        maxrl_degree=2,
+        custom_rm_path="slime_plugins.maxrl.regression.boxed_gaussian_reward",
+        reward_key="maxrl_log_likelihood",
+    )
+
+    module._validate_maxrl_args(args)
+
+
+@pytest.mark.unit
+def test_maxrl_still_accepts_optional_rollout_shuffle(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    args = make_slime_validate_args(
+        advantage_estimator="maxrl",
+        rollout_batch_size=2,
+        n_samples_per_prompt=2,
+        n_samples_per_eval_prompt=2,
         global_batch_size=4,
         rollout_shuffle=True,
         maxrl_degree=2,

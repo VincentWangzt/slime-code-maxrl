@@ -4,6 +4,7 @@ import logging
 import os
 import random
 import re
+from typing import Any
 
 import numpy as np
 import ray
@@ -15,9 +16,16 @@ except ImportError:
 
 from slime.utils.types import MultimodalTypes, Sample
 
+from .misc import load_function
 from .timer import Timer
 
-__all__ = ["Dataset", "get_source"]
+__all__ = [
+    "Dataset",
+    "build_sample",
+    "filter_long_prompt",
+    "get_source",
+    "resolve_message_processor",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +86,25 @@ def _parse_generalized_path(s: str):
     return s, None
 
 
-def filter_long_prompt(origin_samples: list[Sample], tokenizer, processor, max_length: int | None) -> list[Sample]:
+def filter_long_prompt(
+    origin_samples: list[Sample],
+    tokenizer,
+    processor,
+    max_length: int | None,
+    *,
+    fail_on_long_prompt: bool = False,
+) -> list[Sample]:
     if max_length is None:
         return origin_samples
+    if not origin_samples:
+        return []
 
     if not isinstance(origin_samples[0].prompt, str):
+        if fail_on_long_prompt:
+            raise ValueError(
+                "Cannot enforce a strict prompt-token limit on unrendered "
+                "conversation prompts. Enable apply_chat_template."
+            )
         logger.warning(
             "Skipping max_length check for list prompt. Set apply_chat_template=True to enable length filtering."
         )
@@ -122,7 +144,22 @@ def filter_long_prompt(origin_samples: list[Sample], tokenizer, processor, max_l
             if len(input_ids) <= max_length
         ]
 
-    logger.info(f"Filtered {len(origin_samples) - len(filtered_samples)} samples longer than max_length={max_length}.")
+    num_filtered = len(origin_samples) - len(filtered_samples)
+    if fail_on_long_prompt and num_filtered:
+        identifiers = [
+            sample.metadata.get("identifier")
+            for sample in origin_samples
+            if sample not in filtered_samples and isinstance(sample.metadata, dict)
+        ]
+        identifiers = [identifier for identifier in identifiers if identifier is not None]
+        identifier_suffix = f" Offending identifiers: {identifiers[:5]}." if identifiers else ""
+        raise ValueError(
+            f"{num_filtered} prompt(s) exceed the strict {max_length}-token limit "
+            f"after chat-template rendering.{identifier_suffix}"
+        )
+
+    if num_filtered:
+        logger.info(f"Filtered {num_filtered} samples longer than max_length={max_length}.")
 
     return filtered_samples
 
@@ -199,6 +236,103 @@ def _build_messages(data: dict, prompt_key: str, as_conversation: bool, multimod
     return prompt
 
 
+def resolve_message_processor(
+    config: dict[str, Any] | None,
+) -> tuple[Any, dict[str, Any]] | None:
+    """Resolve a row-level message processor from a JSON-compatible config."""
+    if config is None:
+        return None
+    if not isinstance(config, dict):
+        raise TypeError("message_processor must be a mapping.")
+
+    path = config.get("path")
+    if not isinstance(path, str) or not path:
+        raise ValueError("message_processor.path must be a non-empty import path.")
+    kwargs = config.get("kwargs", {})
+    if not isinstance(kwargs, dict):
+        raise TypeError("message_processor.kwargs must be a mapping.")
+    return load_function(path), dict(kwargs)
+
+
+def build_sample(
+    data: dict[str, Any],
+    *,
+    tokenizer,
+    processor,
+    prompt_key: str,
+    multimodal_keys: dict[str, str] | None,
+    label_key: str | None,
+    tool_key: str | None,
+    metadata_key: str,
+    apply_chat_template: bool,
+    apply_chat_template_kwargs: dict[str, Any] | None,
+    message_processor: tuple[Any, dict[str, Any]] | None = None,
+) -> Sample:
+    """Convert one dataset row into the standard rollout ``Sample``."""
+    as_conversation = apply_chat_template or (multimodal_keys is not None)
+    if message_processor is None:
+        prompt = _build_messages(data, prompt_key, as_conversation, multimodal_keys)
+    else:
+        process_messages, processor_kwargs = message_processor
+        prompt = process_messages(data, tokenizer=tokenizer, **processor_kwargs)
+        if not isinstance(prompt, str | list):
+            raise TypeError(
+                "A message processor must return a prompt string or a list "
+                f"of message mappings, got {type(prompt)}."
+            )
+        if apply_chat_template and not isinstance(prompt, list):
+            raise TypeError(
+                "A message processor used with apply_chat_template must "
+                "return a list of message mappings."
+            )
+
+    raw_metadata = data.get(metadata_key) or {}
+    if not isinstance(raw_metadata, dict):
+        raise TypeError(f"{metadata_key} must contain a mapping, got {type(raw_metadata)}.")
+    metadata = dict(raw_metadata)
+
+    tools = None
+    if tool_key is not None and tool_key in data:
+        tools = data[tool_key]
+        if isinstance(tools, str):
+            tools = json.loads(tools)
+        elif isinstance(tools, np.ndarray):
+            tools = tools.tolist()
+        if not isinstance(tools, list):
+            raise TypeError(f"tools must be a list, got {type(tools)} instead")
+        metadata["tools"] = tools
+
+    if apply_chat_template:
+        output_prompt = tokenizer.apply_chat_template(
+            prompt,
+            tools=tools,
+            tokenize=False,
+            add_generation_prompt=True,
+            **(apply_chat_template_kwargs or {}),
+        )
+    else:
+        output_prompt = prompt
+
+    if processor:
+        from slime.utils.processing_utils import process_vision_info
+
+        if not isinstance(prompt, list):
+            raise TypeError(
+                "prompt must be a list when processor is not None, "
+                f"got {type(prompt)} instead"
+            )
+        multimodal_inputs = process_vision_info(prompt, processor)
+    else:
+        multimodal_inputs = None
+
+    return Sample(
+        prompt=output_prompt,
+        label=data[label_key] if label_key is not None else None,
+        metadata=metadata,
+        multimodal_inputs=multimodal_inputs,
+    )
+
+
 class Dataset:
     def __init__(
         self,
@@ -215,56 +349,36 @@ class Dataset:
         seed=42,
         apply_chat_template=False,
         apply_chat_template_kwargs=None,
+        message_processor=None,
+        fail_on_long_prompt=False,
     ):
+        resolved_message_processor = resolve_message_processor(message_processor)
         origin_samples = []
         for data in read_file(path):
-            # Both chat templates and multimodal inputs require conversation format (list of message dicts)
-            as_conversation = apply_chat_template or (multimodal_keys is not None)
-            prompt = _build_messages(data, prompt_key, as_conversation, multimodal_keys)
-
-            metadata = data.get(metadata_key) or {}
-            tools = None
-            if tool_key is not None and tool_key in data:
-                tools = data[tool_key]
-                if isinstance(tools, str):
-                    tools = json.loads(tools)
-                elif isinstance(tools, np.ndarray):
-                    tools = tools.tolist()
-                assert isinstance(tools, list), f"tools must be a list, got {type(tools)} instead"
-                metadata["tools"] = tools
-
-            if apply_chat_template:
-                output_prompt = tokenizer.apply_chat_template(
-                    prompt,
-                    tools=tools,
-                    tokenize=False,
-                    add_generation_prompt=True,
-                    **(apply_chat_template_kwargs or {}),
-                )
-            else:
-                output_prompt = prompt
-
-            if processor:
-                from slime.utils.processing_utils import process_vision_info
-
-                assert isinstance(
-                    prompt, list
-                ), f"prompt must be a list when processor is not None, got {type(prompt)} instead"
-                multimodal_inputs = process_vision_info(prompt, processor)
-            else:
-                multimodal_inputs = None
-
             origin_samples.append(
-                Sample(
-                    prompt=output_prompt,
-                    label=data[label_key] if label_key is not None else None,
-                    metadata=metadata,
-                    multimodal_inputs=multimodal_inputs,
+                build_sample(
+                    data,
+                    tokenizer=tokenizer,
+                    processor=processor,
+                    prompt_key=prompt_key,
+                    multimodal_keys=multimodal_keys,
+                    label_key=label_key,
+                    metadata_key=metadata_key,
+                    tool_key=tool_key,
+                    apply_chat_template=apply_chat_template,
+                    apply_chat_template_kwargs=apply_chat_template_kwargs,
+                    message_processor=resolved_message_processor,
                 )
             )
 
         if max_length is not None:
-            self.origin_samples = filter_long_prompt(origin_samples, tokenizer, processor, max_length)
+            self.origin_samples = filter_long_prompt(
+                origin_samples,
+                tokenizer,
+                processor,
+                max_length,
+                fail_on_long_prompt=fail_on_long_prompt,
+            )
         else:
             self.origin_samples = origin_samples
 

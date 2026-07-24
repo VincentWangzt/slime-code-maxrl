@@ -649,6 +649,17 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument("--apply-chat-template", action="store_true", default=False)
             # Temporarily be JSON-serialized str, will be a real dict after using Omegaconf
             parser.add_argument("--apply-chat-template-kwargs", type=json.loads, default="{}")
+            parser.add_argument(
+                "--message-processor",
+                type=json.loads,
+                default=None,
+                help=(
+                    "JSON row-level prompt processor config with an import "
+                    "path and optional kwargs. The callable receives "
+                    "(row, tokenizer=..., **kwargs) and returns a prompt "
+                    "string or message list."
+                ),
+            )
             parser.add_argument("--input-key", type=str, default="input", help="JSON dataset key")
             parser.add_argument("--label-key", type=str, default=None, help="JSON dataset key")
             parser.add_argument(
@@ -1778,9 +1789,6 @@ def _validate_maxrl_args(args) -> None:
             "MaxRL requires a positive n_samples_per_eval_prompt for every "
             f"eval dataset; invalid datasets: {invalid_eval_datasets}."
         )
-    if not args.rollout_shuffle:
-        raise ValueError("MaxRL requires --rollout-shuffle.")
-
     expected_global_batch_size = (
         args.rollout_batch_size * args.n_samples_per_prompt
     )

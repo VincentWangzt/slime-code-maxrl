@@ -12,21 +12,6 @@ REMOTE_MODAL_DIR = f"{REMOTE_REPO_ROOT}/scripts/modal"
 VOLUME_MOUNT_PATH = "/data"
 VOLUME_NAME = "code-maxrl-slime"
 
-_CACHED_SOURCE_IGNORE = (
-    ".env*",
-    ".git",
-    ".git/**",
-    ".venv",
-    ".venv/**",
-    ".venv*",
-    "**/.venv/**",
-    "**/__pycache__/**",
-    "**/.pytest_cache/**",
-    "**/.ruff_cache/**",
-    "scripts",
-    "scripts/**",
-)
-
 _RUNTIME_SCRIPTS_IGNORE = (
     ".venv",
     ".venv/**",
@@ -68,12 +53,56 @@ RUNTIME_IMAGE = (
             "APEX_NVCC_THREADS": "2",
         },
     )
-    .run_commands("rm -rf /root/slime/.git /root/slime/scripts")
+    .run_commands(
+        "rm -rf "
+        "/root/slime/.git "
+        "/root/slime/scripts "
+        "/root/slime/examples "
+        "/root/slime/slime "
+        "/root/slime/slime_plugins "
+        "/root/slime/tests "
+        "/root/slime/tools "
+        "/root/slime/prompts"
+    )
     .add_local_dir(
-        REPO_ROOT,
-        remote_path=REMOTE_REPO_ROOT,
+        REPO_ROOT / "examples",
+        remote_path=f"{REMOTE_REPO_ROOT}/examples",
         copy=True,
-        ignore=_CACHED_SOURCE_IGNORE,
+    )
+    .add_local_dir(
+        REPO_ROOT / "slime",
+        remote_path=f"{REMOTE_REPO_ROOT}/slime",
+        copy=True,
+    )
+    .add_local_dir(
+        REPO_ROOT / "slime_plugins",
+        remote_path=f"{REMOTE_REPO_ROOT}/slime_plugins",
+        copy=True,
+    )
+    .add_local_dir(
+        REPO_ROOT / "tests",
+        remote_path=f"{REMOTE_REPO_ROOT}/tests",
+        copy=True,
+    )
+    .add_local_dir(
+        REPO_ROOT / "tools",
+        remote_path=f"{REMOTE_REPO_ROOT}/tools",
+        copy=True,
+    )
+    .add_local_dir(
+        REPO_ROOT / "prompts",
+        remote_path=f"{REMOTE_REPO_ROOT}/prompts",
+        copy=True,
+    )
+    .add_local_file(
+        REPO_ROOT / "train.py",
+        remote_path=f"{REMOTE_REPO_ROOT}/train.py",
+        copy=True,
+    )
+    .add_local_file(
+        REPO_ROOT / "train_async.py",
+        remote_path=f"{REMOTE_REPO_ROOT}/train_async.py",
+        copy=True,
     )
     # Leave the mount point absent from the image so Modal can create it when
     # attaching the Volume; the upstream image otherwise leaves /data present.
