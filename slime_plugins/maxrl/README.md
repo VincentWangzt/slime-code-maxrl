@@ -37,5 +37,6 @@ shown above are recommended, but are not validation requirements.
 
 The launcher uses Slime's existing `--message-processor` interface to load
 `prompts/code_regression.yaml`, prefix-truncate code to 2,048 model tokens,
-apply the model chat template, and fail if the rendered prompt exceeds 3,072
-tokens. The top-level `prompts/` directory is cached in the Modal image.
+and apply the model chat template. If `--rollout-max-prompt-len` is set, the
+data source fails when a rendered prompt exceeds that limit. The top-level
+`prompts/` directory is cached in the Modal image.

@@ -153,11 +153,6 @@ class CodeRegressionDataSource(DataSource):
             raise ValueError(
                 "CodeRegressionDataSource requires --apply-chat-template."
             )
-        if args.rollout_max_prompt_len is None:
-            raise ValueError(
-                "CodeRegressionDataSource requires --rollout-max-prompt-len."
-            )
-
         self.args = args
         self.metadata: dict[str, Any] = {}
         self.buffer: list[list[Sample]] = []
