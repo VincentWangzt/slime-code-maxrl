@@ -10,7 +10,7 @@ cd "${REPO_ROOT}"
 
 source scripts/models/qwen3-4B-Instruct-2507.sh
 
-WANDB_RUN_NAME="qwen3-4B-Instruct-2507-cdss-maxrl-bs-32-rollout-8"
+WANDB_RUN_NAME="qwen3-4B-Instruct-2507-cdss-maxrl-bs-128-rollout-16"
 
 CKPT_ARGS=(
     --hf-checkpoint /data/models/Qwen3-4B-Instruct-2507
@@ -35,11 +35,10 @@ ROLLOUT_ARGS=(
     --message-processor '{"path":"slime_plugins.maxrl.code_regression.build_messages","kwargs":{"template_path":"/root/slime/prompts/code_regression.yaml","code_max_tokens":2048}}'
     --data-source-path slime_plugins.maxrl.code_regression.CodeRegressionDataSource
     
-    --num-rollout 100
+    --num-rollout 200
     --rollout-batch-size 128
     --n-samples-per-prompt 16
     --num-steps-per-rollout 1
-    --global-batch-size 2048
     --rollout-max-response-len 2048
     --rollout-temperature 1
 )
@@ -48,11 +47,12 @@ EVAL_ARGS=(
     --eval-prompt-data CDSS /data/datasets/CDSS/eval_cap_256_raw_code.jsonl
     --eval-input-key code
     --eval-label-key target
-    --n-samples-per-eval-prompt 5
+    --n-samples-per-eval-prompt 3
     --eval-max-response-len 2048
     --eval-temperature 1.0
     --eval-top-p 1.0
     --eval-interval 20 
+    --sample-save-dir "/data/samples/${WANDB_RUN_NAME}"
 )
 
 PERF_ARGS=(
@@ -63,7 +63,7 @@ PERF_ARGS=(
     --expert-model-parallel-size 1
     --expert-tensor-parallel-size 1
     --use-dynamic-batch-size
-    --max-tokens-per-gpu 9216
+    --max-tokens-per-gpu 10240
     --balance-data
 
     --recompute-granularity full
@@ -94,11 +94,12 @@ OPTIMIZER_ARGS=(
 SGLANG_ARGS=(
     --rollout-num-gpus-per-engine 1
     --sglang-mem-fraction-static 0.7
+    --sglang-server-concurrency 1024
     
     --actor-num-nodes 1
-    --actor-num-gpus-per-node 6
-    --num-gpus-per-node 6
-    --rollout-num-gpus 6
+    --actor-num-gpus-per-node 4
+    --num-gpus-per-node 4
+    --rollout-num-gpus 4
     --colocate
 )
 
@@ -112,7 +113,7 @@ MISC_ARGS=(
 )
 
 uv run --project scripts/modal modal run scripts/modal/train_modal.py \
-    --modal-gpu-count 6 \
+    --modal-gpu-count 4 \
     -- \
     "${MODEL_ARGS[@]}" \
     "${CKPT_ARGS[@]}" \

@@ -248,6 +248,8 @@ def make_slime_validate_args(**overrides):
         rollout_batch_size=1,
         n_samples_per_prompt=1,
         n_samples_per_eval_prompt=1,
+        wandb_eval_sample_count=4,
+        sample_save_dir=None,
         global_batch_size=None,
         rollout_shuffle=False,
         grpo_std_normalization=True,
@@ -386,6 +388,30 @@ def test_maxrl_accepts_positive_even_eval_counts(monkeypatch):
     )
 
     module._validate_maxrl_args(args)
+
+
+@pytest.mark.unit
+def test_wandb_eval_sample_count_rejects_negative_values(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    args = make_slime_validate_args(wandb_eval_sample_count=-1)
+
+    with pytest.raises(ValueError, match="wandb-eval-sample-count"):
+        module._validate_maxrl_args(args)
+
+
+@pytest.mark.unit
+def test_eval_sample_logging_argument_defaults(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    parser = module.argparse.ArgumentParser()
+    module.get_slime_extra_args_provider()(parser)
+
+    defaults = {
+        action.dest: action.default
+        for action in parser._actions
+    }
+
+    assert defaults["wandb_eval_sample_count"] == 4
+    assert defaults["sample_save_dir"] is None
 
 
 @pytest.mark.unit

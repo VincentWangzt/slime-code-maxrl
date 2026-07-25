@@ -119,10 +119,12 @@ def test_train_log_hook_augments_default_metrics(monkeypatch):
 @pytest.mark.unit
 def test_eval_log_hook_augments_default_metrics(monkeypatch):
     captured = {}
+    html_panel = object()
 
     def custom_hook(rollout_id, args, data, log_dict):
         del rollout_id, args, data
         log_dict["eval-core/prediction_coverage/space/CDSS"] = 0.5
+        log_dict["eval/code_regression_samples"] = html_panel
         return False
 
     monkeypatch.setattr(rollout, "load_function", lambda _: custom_hook)
@@ -156,6 +158,8 @@ def test_eval_log_hook_augments_default_metrics(monkeypatch):
     rollout._log_eval_rollout_data(0, args, data)
 
     assert captured["eval-core/prediction_coverage/space/CDSS"] == 0.5
+    assert captured["eval/code_regression_samples"] is html_panel
+    assert captured["eval/step"] == 4
     assert captured["eval/CDSS/response_len/mean"] == 6.0
     assert captured["eval/CDSS/truncated_ratio"] == 0.5
 

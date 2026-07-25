@@ -2,19 +2,24 @@
 
 from __future__ import annotations
 
+import html
+import json
 import math
+import os
 from collections import defaultdict
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from slime.rollout.rm_hub.math_utils import extract_answer
 from slime.utils.maxrl import compute_grouped_maxrl_weights
+from slime.utils.metric_utils import compute_rollout_step
 from slime.utils.types import Sample
 
 _OBSERVATION_METADATA_KEY = "maxrl_regression"
-_WANDB_TABLE_ROW_LIMIT = 32
+_WANDB_EVAL_SAMPLE_KEY = "eval/code_regression_samples"
 
 
 def extract_boxed_number(response: str | None) -> float | None:
@@ -165,57 +170,263 @@ def _observation_for_logging(args: Any, sample: Sample) -> dict[str, Any]:
     return _score_observation(args, sample)
 
 
-def _log_wandb_sample_table(
-    args: Any,
-    *,
-    key: str,
-    samples: Sequence[Sample],
-) -> None:
+def _active_wandb_run(args: Any):
     if not getattr(args, "use_wandb", False):
-        return
+        return None
 
     import wandb
 
     if wandb.run is None:
-        return
+        return None
     prompt_yaml = getattr(args, "code_regression_prompt_yaml", None)
     if isinstance(prompt_yaml, str):
         wandb.config.update(
             {"code_regression_prompt_yaml": prompt_yaml},
             allow_val_change=True,
         )
+    return wandb
 
-    table = wandb.Table(
-        columns=[
-            "prompt",
-            "response",
-            "target",
-            "prediction",
-            "score",
-            "language",
-            "identifier",
+
+def _cdss_identifier(sample: Sample) -> str:
+    metadata = sample.metadata
+    if not isinstance(metadata, dict):
+        raise ValueError(
+            "CDSS sample metadata must be a mapping with language and identifier fields."
+        )
+    identifier = metadata.get("identifier")
+    if not isinstance(identifier, str) or not identifier.strip():
+        raise ValueError("CDSS sample metadata.identifier must be a non-empty string.")
+    return identifier
+
+
+def _json_compatible_prompt(sample: Sample) -> Any:
+    try:
+        json.dumps(sample.prompt, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"CDSS sample {sample.index!r} has a prompt that is not JSON-compatible."
+        ) from error
+    return sample.prompt
+
+
+def _sample_status_value(sample: Sample) -> str:
+    if not isinstance(sample.status, Sample.Status):
+        raise ValueError(
+            f"CDSS sample {sample.index!r} has invalid status {sample.status!r}."
+        )
+    return sample.status.value
+
+
+def _ordered_eval_sample_groups(
+    args: Any,
+    samples: Sequence[Sample],
+) -> list[dict[str, Any]]:
+    grouped: dict[int, list[Sample]] = defaultdict(list)
+    sample_indices: set[int] = set()
+    for sample in samples:
+        if type(sample.group_index) is not int:
+            raise ValueError(
+                "CDSS evaluation requires integer group_index on every sample."
+            )
+        if type(sample.index) is not int:
+            raise ValueError(
+                "CDSS evaluation requires integer index on every sample."
+            )
+        if sample.index in sample_indices:
+            raise ValueError(
+                f"CDSS evaluation sample index {sample.index} is duplicated."
+            )
+        sample_indices.add(sample.index)
+        grouped[sample.group_index].append(sample)
+
+    group_sizes = {len(group_samples) for group_samples in grouped.values()}
+    expected_group_size = next(iter(group_sizes)) if len(group_sizes) == 1 else 0
+    if len(group_sizes) != 1 or expected_group_size <= 0:
+        raise ValueError(
+            "CDSS evaluation requires equally sized, non-empty sample groups; "
+            f"got sizes {sorted(group_sizes)}."
+        )
+
+    groups: list[dict[str, Any]] = []
+    for group_index in sorted(grouped):
+        entries: list[dict[str, Any]] = []
+        for response_rank, sample in enumerate(
+            sorted(grouped[group_index], key=lambda item: item.index)
+        ):
+            if not isinstance(sample.response, str):
+                raise ValueError(
+                    f"CDSS sample {sample.index!r} response must be a string."
+                )
+            entries.append(
+                {
+                    "sample": sample,
+                    "response_rank": response_rank,
+                    "observation": _observation_for_logging(args, sample),
+                    "identifier": _cdss_identifier(sample),
+                    "prompt": _json_compatible_prompt(sample),
+                    "status": _sample_status_value(sample),
+                }
+            )
+
+        targets = {
+            entry["observation"]["target"]
+            for entry in entries
+        }
+        languages = {
+            entry["observation"]["language"]
+            for entry in entries
+        }
+        if len(targets) != 1 or len(languages) != 1:
+            raise ValueError(
+                f"CDSS eval group {group_index!r} mixes targets or languages."
+            )
+        extracted = [
+            entry["observation"]["prediction"]
+            for entry in entries
+            if entry["observation"]["prediction"] is not None
         ]
-    )
-    ordered = sorted(
-        samples,
-        key=lambda sample: (
-            sample.index is None,
-            sample.index if sample.index is not None else 0,
+        groups.append(
+            {
+                "group_index": group_index,
+                "target": targets.pop(),
+                "language": languages.pop(),
+                "prediction": (
+                    float(np.median(np.asarray(extracted, dtype=np.float64)))
+                    if extracted
+                    else None
+                ),
+                "entries": entries,
+            }
+        )
+    return groups
+
+
+def _representative_entry(group: dict[str, Any]) -> dict[str, Any]:
+    entries = group["entries"]
+    median_prediction = group["prediction"]
+    if median_prediction is None:
+        return entries[0]
+    return min(
+        (
+            entry
+            for entry in entries
+            if entry["observation"]["prediction"] is not None
+        ),
+        key=lambda entry: (
+            abs(entry["observation"]["prediction"] - median_prediction),
+            entry["response_rank"],
         ),
     )
-    for sample in ordered[:_WANDB_TABLE_ROW_LIMIT]:
-        observation = _observation_for_logging(args, sample)
-        metadata = sample.metadata if isinstance(sample.metadata, dict) else {}
-        table.add_data(
-            sample.prompt,
-            sample.response,
-            observation["target"],
-            observation["prediction"],
-            observation["score"],
-            observation["language"],
-            metadata.get("identifier"),
+
+
+def _prompt_for_html(prompt: Any) -> str:
+    if isinstance(prompt, str):
+        return prompt
+    return json.dumps(
+        prompt,
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=2,
+    )
+
+
+def _render_eval_sample_html(
+    groups: Sequence[dict[str, Any]],
+    sample_count: int,
+) -> str:
+    cards: list[str] = []
+    for group in groups[:sample_count]:
+        entry = _representative_entry(group)
+        target = html.escape(
+            json.dumps(group["target"], allow_nan=False),
+            quote=True,
         )
-    wandb.log({key: table})
+        prompt = html.escape(
+            _prompt_for_html(entry["prompt"]),
+            quote=True,
+        )
+        response = html.escape(entry["sample"].response, quote=True)
+        cards.append(
+            '<article class="sample-card">'
+            f"<section><h2>Target</h2><pre>{target}</pre></section>"
+            f"<section><h2>Prompt</h2><pre>{prompt}</pre></section>"
+            f"<section><h2>Response</h2><pre>{response}</pre></section>"
+            "</article>"
+        )
+    return (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        "<style>"
+        "body{margin:0;padding:16px;background:#f6f7f9;color:#1f2328;"
+        "font-family:system-ui,sans-serif}"
+        ".samples{display:grid;gap:16px}"
+        ".sample-card{background:#fff;border:1px solid #d0d7de;border-radius:8px;"
+        "padding:16px;box-shadow:0 1px 2px rgba(31,35,40,.08)}"
+        "section+section{margin-top:14px}"
+        "h2{font-size:14px;margin:0 0 6px;color:#57606a}"
+        "pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;"
+        "font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}"
+        "</style></head><body><main class=\"samples\">"
+        + "".join(cards)
+        + "</main></body></html>"
+    )
+
+
+def _wandb_eval_sample_html(
+    args: Any,
+    groups: Sequence[dict[str, Any]],
+):
+    wandb = _active_wandb_run(args)
+    if wandb is None:
+        return None
+
+    sample_count = args.wandb_eval_sample_count
+    if sample_count < 0:
+        raise ValueError("--wandb-eval-sample-count must be non-negative.")
+    if sample_count == 0:
+        return None
+    return wandb.Html(_render_eval_sample_html(groups, sample_count))
+
+
+def _write_eval_samples_jsonl(
+    args: Any,
+    rollout_id: int,
+    groups: Sequence[dict[str, Any]],
+) -> None:
+    sample_save_dir = args.sample_save_dir
+    if sample_save_dir is None:
+        return
+    if not isinstance(sample_save_dir, str) or not sample_save_dir.strip():
+        raise ValueError("--sample-save-dir must be a non-empty path when set.")
+
+    step = compute_rollout_step(args, rollout_id)
+    directory = Path(sample_save_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    destination = directory / f"eval_step_{step:06d}.jsonl"
+    temporary_path = destination.with_suffix(destination.suffix + ".tmp")
+
+    with temporary_path.open("w", encoding="utf-8", newline="\n") as output:
+        for group in groups:
+            for entry in group["entries"]:
+                observation = entry["observation"]
+                record = {
+                    "step": step,
+                    "language": observation["language"],
+                    "identifier": entry["identifier"],
+                    "response_rank": entry["response_rank"],
+                    "prompt": entry["prompt"],
+                    "response": entry["sample"].response,
+                    "target": observation["target"],
+                    "status": entry["status"],
+                }
+                output.write(
+                    json.dumps(
+                        record,
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    )
+                )
+                output.write("\n")
+    os.replace(temporary_path, destination)
 
 
 def log_train_regression_metrics(
@@ -291,62 +502,21 @@ def log_train_regression_metrics(
     log_dict["rollout/maxrl/coefficient_abs_mean"] = (
         float(np.abs(weights).mean()) if weights.size else float("nan")
     )
-    if rollout_id == 0 or (rollout_id + 1) % 10 == 0:
-        _log_wandb_sample_table(
-            args,
-            key="rollout/code_regression_samples",
-            samples=samples,
-        )
+    _active_wandb_run(args)
     return False
 
 
 def _prompt_predictions(
-    args: Any,
-    samples: Sequence[Sample],
+    groups: Sequence[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    grouped: dict[Any, list[dict[str, Any]]] = defaultdict(list)
-    for sample in samples:
-        if sample.group_index is None:
-            raise ValueError("CDSS evaluation requires group_index on every sample.")
-        grouped[sample.group_index].append(_observation_for_logging(args, sample))
-
-    group_sizes = {len(observations) for observations in grouped.values()}
-    expected_group_size = next(iter(group_sizes)) if len(group_sizes) == 1 else 0
-    if len(group_sizes) != 1 or expected_group_size <= 0:
-        raise ValueError(
-            "CDSS evaluation requires equally sized, non-empty sample groups; "
-            f"got sizes {sorted(group_sizes)}."
-        )
-    predictions: list[dict[str, Any]] = []
-    for group_index, observations in grouped.items():
-        if len(observations) != expected_group_size:
-            raise ValueError(
-                f"CDSS eval group {group_index!r} has {len(observations)} samples; "
-                f"expected {expected_group_size}."
-            )
-        targets = {observation["target"] for observation in observations}
-        languages = {observation["language"] for observation in observations}
-        if len(targets) != 1 or len(languages) != 1:
-            raise ValueError(
-                f"CDSS eval group {group_index!r} mixes targets or languages."
-            )
-        extracted = [
-            observation["prediction"]
-            for observation in observations
-            if observation["prediction"] is not None
-        ]
-        predictions.append(
-            {
-                "target": targets.pop(),
-                "language": languages.pop(),
-                "prediction": (
-                    float(np.median(np.asarray(extracted, dtype=np.float64)))
-                    if extracted
-                    else None
-                ),
-            }
-        )
-    return predictions
+    return [
+        {
+            "target": group["target"],
+            "language": group["language"],
+            "prediction": group["prediction"],
+        }
+        for group in groups
+    ]
 
 
 def log_eval_regression_metrics(
@@ -362,8 +532,13 @@ def log_eval_regression_metrics(
     if not isinstance(samples, list) or not samples:
         raise ValueError("The CDSS regression eval hook requires non-empty samples.")
 
-    observations = [_observation_for_logging(args, sample) for sample in samples]
-    predictions = _prompt_predictions(args, samples)
+    groups = _ordered_eval_sample_groups(args, samples)
+    observations = [
+        entry["observation"]
+        for group in groups
+        for entry in group["entries"]
+    ]
+    predictions = _prompt_predictions(groups)
     covered = [
         (prediction["target"], prediction["prediction"], prediction["language"])
         for prediction in predictions
@@ -414,9 +589,8 @@ def log_eval_regression_metrics(
         if language_spearman
         else float("nan")
     )
-    _log_wandb_sample_table(
-        args,
-        key=f"eval/code_regression_samples/rollout_{rollout_id}",
-        samples=samples,
-    )
+    _write_eval_samples_jsonl(args, rollout_id, groups)
+    html_panel = _wandb_eval_sample_html(args, groups)
+    if html_panel is not None:
+        log_dict[_WANDB_EVAL_SAMPLE_KEY] = html_panel
     return False

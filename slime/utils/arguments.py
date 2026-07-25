@@ -820,6 +820,15 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                 default=False,
                 help="Whether to skip evaluation before training.",
             )
+            parser.add_argument(
+                "--sample-save-dir",
+                type=str,
+                default=None,
+                help=(
+                    "Directory for complete evaluation response JSONL files. "
+                    "The CDSS MaxRL eval hook writes one file per evaluation step."
+                ),
+            )
 
             # The following keys are used to override the rollout version during eval.
             parser.add_argument("--eval-input-key", type=str, default=None, help="JSON dataset key")
@@ -1206,6 +1215,15 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument("--wandb-team", type=str, default=None)
             parser.add_argument("--wandb-group", type=str, default=None)
             reset_arg(parser, "--wandb-project", type=str, default=None)
+            parser.add_argument(
+                "--wandb-eval-sample-count",
+                type=int,
+                default=4,
+                help=(
+                    "Number of ordered CDSS prompt groups to include in the "
+                    "combined W&B evaluation HTML preview. Set to 0 to disable."
+                ),
+            )
             parser.add_argument(
                 "--disable-wandb-random-suffix",
                 action="store_false",
@@ -1750,6 +1768,9 @@ def _resolve_eval_datasets(args) -> list[EvalDatasetConfig]:
 
 
 def _validate_maxrl_args(args) -> None:
+    if args.wandb_eval_sample_count < 0:
+        raise ValueError("--wandb-eval-sample-count must be non-negative.")
+
     if args.advantage_estimator != "maxrl":
         return
 
