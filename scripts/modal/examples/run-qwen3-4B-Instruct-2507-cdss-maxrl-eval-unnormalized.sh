@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Preserve container paths when this script is run from Git Bash on Windows.
+export MSYS2_ARG_CONV_EXCL="*"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../../.." &>/dev/null && pwd)"
+cd "${REPO_ROOT}"
+
+source scripts/models/qwen3-4B-Instruct-2507.sh
+
+WANDB_RUN_NAME="eval-qwen3-4B-Instruct-2507-unnormalized"
+TRAIN_CHECKPOINT_NAME="qwen3-4B-Instruct-2507-cdss-maxrl-bs-128-rollout-16"
+
+CKPT_ARGS=(
+    --hf-checkpoint /data/models/Qwen3-4B-Instruct-2507
+    --ref-load /data/models/Qwen3-4B-Instruct-2507_torch_dist
+    --load "/data/checkpoints/${TRAIN_CHECKPOINT_NAME}"
+)
+
+WANDB_ARGS=(
+    --use-wandb
+    --wandb-project maxrl-code-regression
+    --wandb-group "${WANDB_RUN_NAME}"
+    --disable-wandb-random-suffix
+)
+
+ROLLOUT_ARGS=(
+    --prompt-data /data/datasets/CDSS/train_quantile_normalized.parquet
+    --input-key input
+    --label-key target
+    --apply-chat-template
+    --message-processor '{"path":"slime_plugins.maxrl.code_regression.build_messages","kwargs":{"template_path":"/root/slime/prompts/code_regression_unnormalized.yaml","code_max_tokens":2048}}'
+    --data-source-path slime_plugins.maxrl.code_regression.CodeRegressionDataSource
+
+    --num-rollout 0
+    --rollout-batch-size 128
+    --n-samples-per-prompt 16
+    --num-steps-per-rollout 1
+    --rollout-max-response-len 2048
+    --rollout-temperature 1
+)
+
+EVAL_ARGS=(
+    --eval-prompt-data CDSS /data/datasets/CDSS/eval_cap_256_unnormalized_raw_code.jsonl
+    --eval-input-key code
+    --eval-label-key target
+    --n-samples-per-eval-prompt 5
+    --eval-max-response-len 2048
+    --eval-temperature 1.0
+    --eval-top-p 1.0
+    --eval-interval 20
+    --sample-save-dir "/data/samples/${WANDB_RUN_NAME}"
+)
+
+PERF_ARGS=(
+    --tensor-model-parallel-size 2
+    --sequence-parallel
+    --pipeline-model-parallel-size 1
+    --context-parallel-size 1
+    --expert-model-parallel-size 1
+    --expert-tensor-parallel-size 1
+    --use-dynamic-batch-size
+    --max-tokens-per-gpu 10240
+    --balance-data
+
+    --recompute-granularity full
+    --recompute-method uniform
+    --recompute-num-layers 1
+)
+
+MAXRL_ARGS=(
+    --advantage-estimator maxrl
+    --custom-rm-path slime_plugins.maxrl.regression.boxed_gaussian_reward
+    --reward-key maxrl_log_likelihood
+    --eval-reward-key maxrl_score
+    --custom-rollout-log-function-path slime_plugins.maxrl.regression.log_train_regression_metrics
+    --custom-eval-rollout-log-function-path slime_plugins.maxrl.regression.log_eval_regression_metrics
+
+    --maxrl-score-std 1
+)
+
+OPTIMIZER_ARGS=(
+    --optimizer adam
+    --lr 1e-6
+    --lr-decay-style constant
+    # Megatron still constructs a scheduler before an eval-only run.
+    --lr-decay-iters 1
+    --weight-decay 0.1
+    --adam-beta1 0.9
+    --adam-beta2 0.98
+    --no-load-optim
+    --no-load-rng
+)
+
+SGLANG_ARGS=(
+    --rollout-num-gpus-per-engine 1
+    --sglang-mem-fraction-static 0.7
+    --sglang-server-concurrency 1024
+
+    --actor-num-nodes 1
+    --actor-num-gpus-per-node 4
+    --num-gpus-per-node 4
+    --rollout-num-gpus 4
+    --colocate
+)
+
+MISC_ARGS=(
+    --attention-dropout 0.0
+    --hidden-dropout 0.0
+    --accumulate-allreduce-grads-in-fp32
+    --attention-softmax-in-fp32
+    --attention-backend flash
+    --megatron-to-hf-mode bridge
+)
+
+main() {
+    uv run --project scripts/modal modal run scripts/modal/train_modal.py \
+        --modal-gpu-count 4 \
+        -- \
+        "${MODEL_ARGS[@]}" \
+        "${CKPT_ARGS[@]}" \
+        "${ROLLOUT_ARGS[@]}" \
+        "${PERF_ARGS[@]}" \
+        "${MAXRL_ARGS[@]}" \
+        "${OPTIMIZER_ARGS[@]}" \
+        "${SGLANG_ARGS[@]}" \
+        "${MISC_ARGS[@]}" \
+        "${WANDB_ARGS[@]}" \
+        "${EVAL_ARGS[@]}"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
