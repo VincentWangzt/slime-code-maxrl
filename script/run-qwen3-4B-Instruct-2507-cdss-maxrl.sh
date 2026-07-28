@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+
+# Stop a previous single-node Slime run before starting a fresh Ray head.
+pkill -9 sglang 2>/dev/null || true
+ray stop --force 2>/dev/null || true
+sleep 3
+
+set -euo pipefail
+set -x
+
+# Prevent Ray from buffering worker stdout/stderr.
+export PYTHONUNBUFFERED=1
+
+NVLINK_COUNT="$(
+    nvidia-smi topo -m 2>/dev/null |
+        grep -o 'NV[0-9][0-9]*' |
+        wc -l ||
+        true
+)"
+if [[ "${NVLINK_COUNT}" -gt 0 ]]; then
+    HAS_NVLINK=1
+else
+    HAS_NVLINK=0
+fi
+echo "HAS_NVLINK: ${HAS_NVLINK} (detected ${NVLINK_COUNT} NVLink references)"
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." &>/dev/null && pwd)"
+cd "${REPO_ROOT}"
+
+source scripts/models/qwen3-4B-Instruct-2507.sh
+
+WANDB_RUN_NAME="qwen3-4B-Instruct-2507-cdss-maxrl-bs-128-rollout-16"
+
+CKPT_ARGS=(
+    --hf-checkpoint /data/models/Qwen3-4B-Instruct-2507
+    --ref-load /data/models/Qwen3-4B-Instruct-2507_torch_dist
+    --save "/data/checkpoints/${WANDB_RUN_NAME}"
+    --load "/data/checkpoints/${WANDB_RUN_NAME}"
+    --save-interval 20
+)
+
+WANDB_ARGS=(
+    --use-wandb
+    --wandb-project maxrl-code-regression
+    --wandb-group "${WANDB_RUN_NAME}"
+    --disable-wandb-random-suffix
+)
+
+ROLLOUT_ARGS=(
+    --prompt-data /data/datasets/CDSS/train_quantile_normalized.parquet
+    --input-key input
+    --label-key target
+    --apply-chat-template
+    --message-processor '{"path":"slime_plugins.maxrl.code_regression.build_messages","kwargs":{"template_path":"/root/slime/prompts/code_regression.yaml","code_max_tokens":2048}}'
+    --data-source-path slime_plugins.maxrl.code_regression.CodeRegressionDataSource
+
+    --num-rollout 200
+    --rollout-batch-size 128
+    --n-samples-per-prompt 16
+    --num-steps-per-rollout 1
+    --rollout-max-response-len 2048
+    --rollout-temperature 1
+)
+
+EVAL_ARGS=(
+    --eval-prompt-data CDSS /data/datasets/CDSS/eval_cap_256_raw_code.jsonl
+    --eval-input-key code
+    --eval-label-key target
+    --n-samples-per-eval-prompt 3
+    --eval-max-response-len 2048
+    --eval-temperature 1.0
+    --eval-top-p 1.0
+    --eval-interval 20
+    --sample-save-dir "/data/samples/${WANDB_RUN_NAME}"
+)
+
+PERF_ARGS=(
+    --tensor-model-parallel-size 2
+    --sequence-parallel
+    --pipeline-model-parallel-size 1
+    --context-parallel-size 1
+    --expert-model-parallel-size 1
+    --expert-tensor-parallel-size 1
+    --use-dynamic-batch-size
+    --max-tokens-per-gpu 10240
+    --balance-data
+
+    --recompute-granularity full
+    --recompute-method uniform
+    --recompute-num-layers 1
+)
+
+MAXRL_ARGS=(
+    --advantage-estimator maxrl
+    --custom-rm-path slime_plugins.maxrl.regression.boxed_gaussian_reward
+    --reward-key maxrl_log_likelihood
+    --eval-reward-key maxrl_score
+    --custom-rollout-log-function-path slime_plugins.maxrl.regression.log_train_regression_metrics
+    --custom-eval-rollout-log-function-path slime_plugins.maxrl.regression.log_eval_regression_metrics
+
+    --maxrl-score-std 1
+)
+
+OPTIMIZER_ARGS=(
+    --optimizer adam
+    --lr 1e-6
+    --lr-decay-style constant
+    --weight-decay 0.1
+    --adam-beta1 0.9
+    --adam-beta2 0.98
+)
+
+SGLANG_ARGS=(
+    --rollout-num-gpus-per-engine 1
+    --sglang-mem-fraction-static 0.7
+    --sglang-server-concurrency 1024
+
+    --actor-num-nodes 1
+    --actor-num-gpus-per-node 4
+    --num-gpus-per-node 4
+    --rollout-num-gpus 4
+    --colocate
+)
+
+MISC_ARGS=(
+    --attention-dropout 0.0
+    --hidden-dropout 0.0
+    --accumulate-allreduce-grads-in-fp32
+    --attention-softmax-in-fp32
+    --attention-backend flash
+    --megatron-to-hf-mode bridge
+)
+
+export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
+export no_proxy="localhost,127.0.0.1,0.0.0.0,${MASTER_ADDR}"
+
+ray start \
+    --head \
+    --node-ip-address "${MASTER_ADDR}" \
+    --num-gpus 4 \
+    --disable-usage-stats \
+    --dashboard-host=0.0.0.0 \
+    --dashboard-port=8265
+
+RUNTIME_ENV_JSON="$(
+    cat <<EOF
+{
+  "env_vars": {
+    "HF_HOME": "/data/cache/huggingface",
+    "HF_HUB_CACHE": "/data/cache/huggingface/hub",
+    "TORCH_HOME": "/data/cache/torch",
+    "XDG_CACHE_HOME": "/data/cache",
+    "PYTHONPATH": "/root/Megatron-LM:/root/slime",
+    "MASTER_ADDR": "${MASTER_ADDR}",
+    "CUDA_DEVICE_MAX_CONNECTIONS": "1",
+    "NCCL_NVLS_ENABLE": "${HAS_NVLINK}",
+    "no_proxy": "localhost,127.0.0.1,0.0.0.0,${MASTER_ADDR}"
+  }
+}
+EOF
+)"
+
+ray job submit --address="http://127.0.0.1:8265" \
+    --runtime-env-json="${RUNTIME_ENV_JSON}" \
+    -- python3 train.py \
+    "${MODEL_ARGS[@]}" \
+    "${CKPT_ARGS[@]}" \
+    "${ROLLOUT_ARGS[@]}" \
+    "${PERF_ARGS[@]}" \
+    "${MAXRL_ARGS[@]}" \
+    "${OPTIMIZER_ARGS[@]}" \
+    "${SGLANG_ARGS[@]}" \
+    "${MISC_ARGS[@]}" \
+    "${WANDB_ARGS[@]}" \
+    "${EVAL_ARGS[@]}"
