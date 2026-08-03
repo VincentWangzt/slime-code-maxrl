@@ -94,6 +94,13 @@ Run MaxRL on code regression datasets with Qwen3-4B-Instruct-2507:
 uv run --project scripts/modal bash scripts/modal/examples/run-qwen3-4B-Instruct-2507-cdss-maxrl.sh
 ```
 
+Train and evaluate on raw byte-count targets with a Gaussian kernel in
+base-10 `log1p` space:
+
+```bash
+uv run --project scripts/modal bash scripts/modal/examples/run-qwen3-4B-Instruct-2507-cdss-maxrl-unnormalized-log10p.sh
+```
+
 The launcher enables W&B project `maxrl-code-regression`. `WANDB_RUN_NAME` in the launcher is used
 as both the exact W&B run name and the checkpoint directory name under `/data/checkpoints`; the
 runtime environment must provide `WANDB_API_KEY`.

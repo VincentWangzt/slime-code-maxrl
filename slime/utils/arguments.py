@@ -275,7 +275,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                             --only-train-params-name-list self_attention.wq_b self_attention.wk self_attention.k_norm self_attention.weights_proj
 
                         3. Train ONLY Layer 20 to 23:
-                            --only-train-params-name-list layers\.2[0-3]\.
+                            --only-train-params-name-list layers\\.2[0-3]\\.
                         """,
             )
 
@@ -976,6 +976,16 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                 help=(
                     "Degree of the MaxRL leave-one-out estimator. "
                     "Defaults to --n-samples-per-prompt."
+                ),
+            )
+            parser.add_argument(
+                "--maxrl-score-space",
+                type=str,
+                choices=["linear", "log10p"],
+                default="linear",
+                help=(
+                    "Space in which the regression MaxRL reward hook computes "
+                    "Gaussian error."
                 ),
             )
             parser.add_argument(
@@ -1786,6 +1796,10 @@ def _validate_maxrl_args(args) -> None:
         )
     if not math.isfinite(args.maxrl_score_std) or args.maxrl_score_std <= 0:
         raise ValueError("--maxrl-score-std must be positive and finite.")
+    if args.maxrl_score_space not in {"linear", "log10p"}:
+        raise ValueError(
+            "--maxrl-score-space must be one of: linear, log10p."
+        )
 
     if args.custom_rm_path != _MAXRL_REGRESSION_RM_PATH:
         raise ValueError(

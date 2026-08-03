@@ -59,13 +59,29 @@ def _score_observation(args: Any, sample: Sample) -> dict[str, Any]:
     score_std = float(args.maxrl_score_std)
     if not math.isfinite(score_std) or score_std <= 0:
         raise ValueError("--maxrl-score-std must be positive and finite.")
+    score_space = args.maxrl_score_space
+    if score_space not in {"linear", "log10p"}:
+        raise ValueError(
+            "--maxrl-score-space must be one of: linear, log10p."
+        )
+    if score_space == "log10p" and target < 0:
+        raise ValueError(
+            "CDSS sample label must be non-negative in log10p score space; "
+            f"got {sample.label!r}."
+        )
 
     prediction = extract_boxed_number(sample.response)
-    if prediction is None:
+    if prediction is None or (score_space == "log10p" and prediction < 0):
         log_likelihood = float("-inf")
         score = 0.0
     else:
-        standardized_error = (prediction - target) / score_std
+        if score_space == "linear":
+            error = prediction - target
+        else:
+            error = (
+                math.log1p(prediction) - math.log1p(target)
+            ) / math.log(10.0)
+        standardized_error = error / score_std
         log_likelihood = -0.5 * standardized_error * standardized_error
         score = math.exp(log_likelihood)
 
@@ -80,7 +96,7 @@ def _score_observation(args: Any, sample: Sample) -> dict[str, Any]:
 
 
 async def boxed_gaussian_reward(args: Any, sample: Sample, **_: Any) -> dict[str, float]:
-    """Return the Gaussian log likelihood and normalized likelihood score."""
+    """Return the configured-space Gaussian kernel and its log score."""
     observation = _score_observation(args, sample)
     if not isinstance(sample.metadata, dict):
         sample.metadata = {}

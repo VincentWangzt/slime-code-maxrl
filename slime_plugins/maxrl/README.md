@@ -14,18 +14,28 @@ Use the first-class estimator with the boxed-number reward and metric hooks:
 ```
 
 Each CDSS row must provide a finite numeric label and a non-empty
-`metadata.language`. Evaluation configuration must name the dataset `CDSS`.
-The reward reuses Slime's rightmost-box extraction, strips the extracted
-content, and converts it with `float`. This accepts finite signed values,
-including `.5`, `1.`, and scientific notation. A missing, malformed, or
-non-finite rightmost box is an extraction failure; earlier boxes are not used
-as fallbacks.
+`metadata.language`. `CodeRegressionDataSource` requires an explicit
+`--label-key` and reads the corresponding Parquet column into `Sample.label`;
+internal observations and saved evaluation records continue to use the
+canonical field name `target`. Evaluation configuration must name the dataset
+`CDSS`. The reward reuses Slime's rightmost-box extraction, strips the
+extracted content, and converts it with `float`. This accepts finite signed
+values, including `.5`, `1.`, and scientific notation. A missing, malformed,
+or non-finite rightmost box is an extraction failure; earlier boxes are not
+used as fallbacks.
 
 MaxRL consumes already normalized log-likelihoods: every value must be finite
 or `-inf` and no value may be materially greater than `0`. The bundled reward
-computes
-`maxrl_log_likelihood = -0.5 * ((prediction - target) / maxrl_score_std)^2`
-and `maxrl_score = exp(maxrl_log_likelihood)`.
+supports `--maxrl-score-space linear` (the default) and
+`--maxrl-score-space log10p`. Define the transformed error as either
+`prediction - target` in linear space or
+`log10(1 + prediction) - log10(1 + target)` in log10p space. It computes
+`maxrl_log_likelihood = -0.5 * (error / maxrl_score_std)^2` and
+`maxrl_score = exp(maxrl_log_likelihood)`. Log10p space accepts zero targets,
+rejects negative targets, and assigns negative predictions a zero score and
+`-inf` log likelihood. This is a unit-peak Gaussian kernel over transformed
+values, not a normalized probability density; it intentionally omits both the
+Gaussian normalization constant and a log-normal Jacobian.
 
 MaxRL requires the exact `--custom-rm-path` and `--reward-key` shown above and
 per-sample reward mode (do not set `--group-rm`). It defaults to degree `N`,

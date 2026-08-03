@@ -10,11 +10,14 @@ cd "${REPO_ROOT}"
 
 source scripts/models/qwen3-4B-Instruct-2507.sh
 
-WANDB_RUN_NAME="eval-qwen3-4B-Instruct-2507-unnormalized"
+WANDB_RUN_NAME="qwen3-4B-Instruct-2507-sigma-0p5-bs-128-rollout-16-log-gaussian-unnormalized"
 
 CKPT_ARGS=(
     --hf-checkpoint /data/models/Qwen3-4B-Instruct-2507
     --ref-load /data/models/Qwen3-4B-Instruct-2507_torch_dist
+    --save "/data/checkpoints/${WANDB_RUN_NAME}"
+    # --load "/data/checkpoints/${WANDB_RUN_NAME}"
+    --save-interval 20
 )
 
 WANDB_ARGS=(
@@ -27,12 +30,12 @@ WANDB_ARGS=(
 ROLLOUT_ARGS=(
     --prompt-data /data/datasets/CDSS/train_quantile_normalized.parquet
     --input-key input
-    --label-key target
+    --label-key memory_bytes_raw
     --apply-chat-template
     --message-processor '{"path":"slime_plugins.maxrl.code_regression.build_messages","kwargs":{"template_path":"/root/slime/prompts/code_regression_unnormalized.yaml","code_max_tokens":2048}}'
     --data-source-path slime_plugins.maxrl.code_regression.CodeRegressionDataSource
 
-    --num-rollout 0
+    --num-rollout 200
     --rollout-batch-size 128
     --n-samples-per-prompt 16
     --num-steps-per-rollout 1
@@ -43,8 +46,8 @@ ROLLOUT_ARGS=(
 EVAL_ARGS=(
     --eval-prompt-data CDSS /data/datasets/CDSS/eval_cap_256_unnormalized_raw_code.jsonl
     --eval-input-key code
-    --eval-label-key target
-    --n-samples-per-eval-prompt 5
+    --eval-label-key memory_bytes_raw
+    --n-samples-per-eval-prompt 3
     --eval-max-response-len 2048
     --eval-temperature 1.0
     --eval-top-p 1.0
@@ -76,24 +79,21 @@ MAXRL_ARGS=(
     --custom-rollout-log-function-path slime_plugins.maxrl.regression.log_train_regression_metrics
     --custom-eval-rollout-log-function-path slime_plugins.maxrl.regression.log_eval_regression_metrics
 
-    --maxrl-score-std 1
+    --maxrl-score-space log10p
+    --maxrl-score-std 0.5
 )
 
 OPTIMIZER_ARGS=(
     --optimizer adam
     --lr 1e-6
     --lr-decay-style constant
-    # Megatron still constructs a scheduler before an eval-only run.
-    --lr-decay-iters 1
     --weight-decay 0.1
     --adam-beta1 0.9
     --adam-beta2 0.98
-    --no-load-optim
-    --no-load-rng
 )
 
 SGLANG_ARGS=(
-    --rollout-num-gpus-per-engine 1
+    --rollout-num-gpus-per-engine 2
     --sglang-mem-fraction-static 0.7
     --sglang-server-concurrency 1024
 

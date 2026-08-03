@@ -202,6 +202,7 @@ def make_slime_validate_args(**overrides):
         kl_loss_coef=0,
         advantage_estimator="grpo",
         maxrl_degree=None,
+        maxrl_score_space="linear",
         maxrl_score_std=1.0,
         maxrl_subtract_baseline=True,
         normalize_advantages=False,
@@ -315,6 +316,7 @@ def test_non_maxrl_preserves_single_eval_rollout_default(monkeypatch):
     [
         ({"n_samples_per_prompt": 1}, "n-samples-per-prompt"),
         ({"maxrl_degree": 5}, "maxrl-degree"),
+        ({"maxrl_score_space": "unknown"}, "score-space"),
         ({"maxrl_score_std": 0.0}, "score-std"),
         ({"custom_rm_path": "custom.reward"}, "custom-rm-path"),
         ({"reward_key": "reward"}, "reward-key"),
@@ -412,6 +414,13 @@ def test_eval_sample_logging_argument_defaults(monkeypatch):
 
     assert defaults["wandb_eval_sample_count"] == 4
     assert defaults["sample_save_dir"] is None
+    assert defaults["maxrl_score_space"] == "linear"
+    score_space_action = next(
+        action
+        for action in parser._actions
+        if action.dest == "maxrl_score_space"
+    )
+    assert set(score_space_action.choices) == {"linear", "log10p"}
 
 
 @pytest.mark.unit

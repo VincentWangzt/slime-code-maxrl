@@ -29,9 +29,7 @@ from slime.utils.types import Sample
 logger = logging.getLogger(__name__)
 
 _REQUIRED_TEMPLATE_KEYS = frozenset({"system", "user"})
-_PARQUET_REQUIRED_COLUMNS = frozenset(
-    {"identifier", "input", "target", "language"}
-)
+_PARQUET_REQUIRED_COLUMNS = frozenset({"identifier", "input", "language"})
 
 
 @cache
@@ -153,7 +151,13 @@ class CodeRegressionDataSource(DataSource):
             raise ValueError(
                 "CodeRegressionDataSource requires --apply-chat-template."
             )
+        label_key = getattr(args, "label_key", None)
+        if not isinstance(label_key, str) or not label_key.strip():
+            raise ValueError(
+                "CodeRegressionDataSource requires a non-empty --label-key."
+            )
         self.args = args
+        self.label_key = label_key
         self.metadata: dict[str, Any] = {}
         self.buffer: list[list[Sample]] = []
         self.sample_group_index = 0
@@ -187,14 +191,23 @@ class CodeRegressionDataSource(DataSource):
 
         self.parquet = pq.ParquetFile(args.prompt_data)
         column_names = set(self.parquet.schema_arrow.names)
-        missing_columns = _PARQUET_REQUIRED_COLUMNS - column_names
+        required_columns = _PARQUET_REQUIRED_COLUMNS | {self.label_key}
+        missing_columns = required_columns - column_names
         if missing_columns:
             raise ValueError(
                 f"CDSS Parquet is missing columns {sorted(missing_columns)}."
             )
         self.columns = [
             column
-            for column in ("identifier", "input", "target", "language", "groups")
+            for column in dict.fromkeys(
+                (
+                    "identifier",
+                    "input",
+                    self.label_key,
+                    "language",
+                    "groups",
+                )
+            )
             if column in column_names
         ]
         self.num_eligible_rows = (
@@ -234,14 +247,15 @@ class CodeRegressionDataSource(DataSource):
                 ) from error
 
     def _sample_from_row(self, row: dict[str, Any]) -> Sample:
-        target = row["target"]
+        target = row[self.label_key]
         try:
             finite_target = math.isfinite(float(target))
         except (TypeError, ValueError):
             finite_target = False
         if not finite_target:
             raise ValueError(
-                f"CDSS row {row['identifier']!r} has a non-finite target."
+                f"CDSS row {row['identifier']!r} has a non-finite target "
+                f"in column {self.label_key!r}."
             )
 
         metadata = {
@@ -263,7 +277,7 @@ class CodeRegressionDataSource(DataSource):
             processor=self.processor,
             prompt_key=self.args.input_key,
             multimodal_keys=self.args.multimodal_keys,
-            label_key="target",
+            label_key=self.label_key,
             metadata_key="metadata",
             tool_key=self.args.tool_key,
             apply_chat_template=self.args.apply_chat_template,

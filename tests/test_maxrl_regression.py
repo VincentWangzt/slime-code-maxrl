@@ -28,6 +28,7 @@ NUM_GPUS = 0
 
 def _args(**overrides):
     values = {
+        "maxrl_score_space": "linear",
         "maxrl_score_std": 1.0,
         "maxrl_degree": 2,
         "maxrl_subtract_baseline": True,
@@ -153,10 +154,77 @@ def test_boxed_gaussian_reward_records_observation():
 
 
 @pytest.mark.unit
-def test_extraction_failure_has_zero_score_and_negative_infinite_log_score():
+def test_boxed_gaussian_reward_uses_base_10_log1p_space():
+    sample = _sample(group_index=0, target=99.0, response=r"\boxed{999}")
+
+    reward = asyncio.run(
+        boxed_gaussian_reward(
+            _args(maxrl_score_space="log10p", maxrl_score_std=0.5),
+            sample,
+        )
+    )
+
+    assert reward["maxrl_log_likelihood"] == pytest.approx(-2.0)
+    assert reward["maxrl_score"] == pytest.approx(math.exp(-2.0))
+
+
+@pytest.mark.unit
+def test_log10p_reward_accepts_zero_target_and_prediction():
+    sample = _sample(group_index=0, target=0.0, response=r"\boxed{0}")
+
+    reward = asyncio.run(
+        boxed_gaussian_reward(
+            _args(maxrl_score_space="log10p", maxrl_score_std=0.5),
+            sample,
+        )
+    )
+
+    assert reward == {
+        "maxrl_log_likelihood": 0.0,
+        "maxrl_score": 1.0,
+    }
+
+
+@pytest.mark.unit
+def test_log10p_reward_marks_negative_prediction_unscoreable_but_extracted():
+    sample = _sample(group_index=0, target=0.0, response=r"\boxed{-1}")
+
+    reward = asyncio.run(
+        boxed_gaussian_reward(_args(maxrl_score_space="log10p"), sample)
+    )
+
+    assert reward["maxrl_log_likelihood"] == float("-inf")
+    assert reward["maxrl_score"] == 0.0
+    assert sample.metadata["maxrl_regression"]["prediction"] == -1.0
+    assert sample.metadata["maxrl_regression"]["extracted"] is True
+
+
+@pytest.mark.unit
+def test_log10p_reward_rejects_negative_target():
+    sample = _sample(group_index=0, target=-1.0, response=r"\boxed{0}")
+
+    with pytest.raises(ValueError, match="non-negative"):
+        asyncio.run(
+            boxed_gaussian_reward(
+                _args(maxrl_score_space="log10p"),
+                sample,
+            )
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("score_space", ["linear", "log10p"])
+def test_extraction_failure_has_zero_score_and_negative_infinite_log_score(
+    score_space,
+):
     sample = _sample(group_index=0, target=2.0, response="not numeric")
 
-    reward = asyncio.run(boxed_gaussian_reward(_args(), sample))
+    reward = asyncio.run(
+        boxed_gaussian_reward(
+            _args(maxrl_score_space=score_space),
+            sample,
+        )
+    )
 
     assert reward["maxrl_score"] == 0.0
     assert reward["maxrl_log_likelihood"] == float("-inf")

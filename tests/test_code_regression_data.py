@@ -140,6 +140,7 @@ def _source_args(
     parquet_path: Path,
     eval_path: Path,
     template_path: Path,
+    label_key: str | None = "target",
 ):
     return types.SimpleNamespace(
         rollout_global_dataset=True,
@@ -152,6 +153,7 @@ def _source_args(
         ],
         hf_checkpoint="/fake/qwen",
         input_key="input",
+        label_key=label_key,
         multimodal_keys=None,
         tool_key=None,
         apply_chat_template_kwargs={},
@@ -160,6 +162,105 @@ def _source_args(
         load=None,
         rollout_shuffle=False,
     )
+
+
+@pytest.mark.unit
+def test_cdss_source_uses_explicit_label_key(tmp_path, monkeypatch):
+    template_path = tmp_path / "prompt.yaml"
+    _write_template(template_path)
+    parquet_path = tmp_path / "train.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "identifier": ["row-a", "eval-b"],
+                "input": ["a()", "b()"],
+                "memory_bytes_raw": [256.0, 512.0],
+                "language": ["Python", "Rust"],
+            }
+        ),
+        parquet_path,
+    )
+    eval_path = tmp_path / "eval.jsonl"
+    eval_path.write_text(
+        json.dumps({"identifier": "eval-b"}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        code_regression,
+        "load_tokenizer",
+        lambda *_args, **_kwargs: FakeTokenizer(),
+    )
+    monkeypatch.setattr(
+        code_regression,
+        "load_processor",
+        lambda *_args, **_kwargs: None,
+    )
+    args = _source_args(
+        tmp_path,
+        parquet_path=parquet_path,
+        eval_path=eval_path,
+        template_path=template_path,
+        label_key="memory_bytes_raw",
+    )
+
+    source = CodeRegressionDataSource(args)
+    sample = source.get_samples(1)[0][0]
+
+    assert sample.label == 256.0
+    assert source.label_key == "memory_bytes_raw"
+    assert "memory_bytes_raw" in source.columns
+    assert "target" not in source.columns
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("label_key", [None, "", "   "])
+def test_cdss_source_requires_non_empty_label_key(
+    tmp_path,
+    label_key,
+):
+    args = _source_args(
+        tmp_path,
+        parquet_path=tmp_path / "unused.parquet",
+        eval_path=tmp_path / "unused.jsonl",
+        template_path=tmp_path / "unused.yaml",
+        label_key=label_key,
+    )
+
+    with pytest.raises(ValueError, match="non-empty --label-key"):
+        CodeRegressionDataSource(args)
+
+
+@pytest.mark.unit
+def test_cdss_source_requires_selected_label_column(tmp_path):
+    template_path = tmp_path / "prompt.yaml"
+    _write_template(template_path)
+    parquet_path = tmp_path / "train.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "identifier": ["row-a", "eval-b"],
+                "input": ["a()", "b()"],
+                "target": [0.0, 1.0],
+                "language": ["Python", "Rust"],
+            }
+        ),
+        parquet_path,
+    )
+    eval_path = tmp_path / "eval.jsonl"
+    eval_path.write_text(
+        json.dumps({"identifier": "eval-b"}) + "\n",
+        encoding="utf-8",
+    )
+    args = _source_args(
+        tmp_path,
+        parquet_path=parquet_path,
+        eval_path=eval_path,
+        template_path=template_path,
+        label_key="memory_bytes_raw",
+    )
+
+    with pytest.raises(ValueError, match="memory_bytes_raw"):
+        CodeRegressionDataSource(args)
 
 
 @pytest.mark.unit
