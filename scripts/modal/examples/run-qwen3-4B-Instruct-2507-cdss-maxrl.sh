@@ -35,7 +35,7 @@ ROLLOUT_ARGS=(
     --message-processor '{"path":"slime_plugins.maxrl.code_regression.build_messages","kwargs":{"template_path":"/root/slime/prompts/code_regression.yaml","code_max_tokens":2048}}'
     --data-source-path slime_plugins.maxrl.code_regression.CodeRegressionDataSource
     
-    --num-rollout 200
+    --num-rollout 400
     --rollout-batch-size 128
     --n-samples-per-prompt 16
     --num-steps-per-rollout 1
@@ -63,7 +63,7 @@ PERF_ARGS=(
     --expert-model-parallel-size 1
     --expert-tensor-parallel-size 1
     --use-dynamic-batch-size
-    --max-tokens-per-gpu 10240
+    --max-tokens-per-gpu 12000
     --balance-data
 
     --recompute-granularity full
@@ -89,6 +89,8 @@ OPTIMIZER_ARGS=(
     --weight-decay 0.1
     --adam-beta1 0.9
     --adam-beta2 0.98
+
+    --override-opt-param-scheduler
 )
 
 SGLANG_ARGS=(
