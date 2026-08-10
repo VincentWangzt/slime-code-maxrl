@@ -27,6 +27,11 @@ from slime.utils.logging_utils import configure_logger, init_tracking
 from slime.utils.maxrl import compute_grouped_maxrl_weights
 from slime.utils.metric_utils import compute_pass_rate, compute_rollout_step, compute_statistics, dict_add_prefix
 from slime.utils.misc import Box, group_by, load_function
+from slime.utils.regression import (
+    REGRESSION_MODEL_PREDICTION_KEY,
+    merge_indexed_regression_predictions,
+    transform_regression_target,
+)
 from slime.utils.types import Sample
 
 from ..utils.metric_utils import has_repetition
@@ -45,6 +50,7 @@ _ROLLOUT_DATA_TENSOR_DTYPES = {
     "rollout_top_p_token_ids": torch.int32,
     "rollout_top_p_token_offsets": torch.int32,
     "teacher_log_probs": torch.float32,
+    "regression_targets": torch.float32,
     "rollout_routed_experts": None,
 }
 
@@ -112,7 +118,14 @@ def _cpu_tensor(value, dtype: torch.dtype | None = None) -> torch.Tensor:
 def _tensorize_rollout_data_for_training(rollout_data: dict[str, Any]) -> None:
     for key, dtype in _ROLLOUT_DATA_TENSOR_DTYPES.items():
         if key in rollout_data:
-            rollout_data[key] = [_cpu_tensor(value, dtype=dtype) for value in rollout_data[key]]
+            rollout_data[key] = [
+                (
+                    _cpu_tensor(value, dtype=dtype).reshape(1)
+                    if key == "regression_targets"
+                    else _cpu_tensor(value, dtype=dtype)
+                )
+                for value in rollout_data[key]
+            ]
 
     if "multimodal_train_inputs" in rollout_data:
         rollout_data["multimodal_train_inputs"] = [
@@ -497,6 +510,7 @@ class RolloutManager:
             runtime_env={"env_vars": add_default_ray_env_vars()},
         ).remote()
         self.rollout_id = -1
+        self._pending_regression_evals: dict[int, tuple[dict[str, Any], dict[str, Any] | None]] = {}
 
         self._health_monitors = []
         if not self.args.debug_train_only and self.args.use_fault_tolerance:
@@ -605,6 +619,60 @@ class RolloutManager:
         data = result.data
         self._save_debug_rollout_data(data, rollout_id=rollout_id, evaluation=True)
         _log_eval_rollout_data(rollout_id, self.args, data, result.metrics)
+
+    def prepare_regression_eval(self, rollout_id):
+        """Cache every eval sample and return full-cache DP batches for Megatron."""
+        if self.args.loss_type != "regression_loss":
+            raise ValueError("prepare_regression_eval is only valid for regression_loss.")
+        if rollout_id in self._pending_regression_evals:
+            raise ValueError(f"Regression evaluation {rollout_id} is already pending.")
+
+        result = call_rollout_fn(
+            self.eval_generate_rollout,
+            self.args,
+            rollout_id,
+            self.data_source,
+            evaluation=True,
+        )
+        data = result.data
+        samples = [sample for info in data.values() for sample in info["samples"]]
+        if not samples:
+            raise ValueError("Regression evaluation cache is empty.")
+        indices = [sample.index for sample in samples]
+        if any(index is None for index in indices):
+            raise ValueError("Every regression evaluation sample must have an index.")
+        if len(set(indices)) != len(indices):
+            raise ValueError("Regression evaluation sample indices must be unique across the full cache.")
+
+        train_data = self._convert_samples_to_train_data(samples)
+        rollout_data_refs = self._split_train_data_by_dp(train_data, global_batch_size=len(samples))
+        self._pending_regression_evals[rollout_id] = (data, result.metrics)
+        return rollout_data_refs
+
+    def finish_regression_eval(self, rollout_id, indexed_predictions):
+        """Validate complete DP prediction coverage, attach scalars, and log metrics."""
+        if rollout_id not in self._pending_regression_evals:
+            raise ValueError(f"Regression evaluation {rollout_id} was not prepared or was already finished.")
+        data, extra_metrics = self._pending_regression_evals[rollout_id]
+        samples = [sample for info in data.values() for sample in info["samples"]]
+        expected_indices = {sample.index for sample in samples}
+
+        predictions = merge_indexed_regression_predictions(expected_indices, indexed_predictions)
+
+        for dataset_info in data.values():
+            squared_errors = []
+            for sample in dataset_info["samples"]:
+                prediction = predictions[sample.index]
+                target = transform_regression_target(sample.label, self.args.regression_target_transform)
+                squared_errors.append((prediction - target) ** 2)
+                sample.metadata[REGRESSION_MODEL_PREDICTION_KEY] = prediction
+                sample.response = repr(prediction)
+            dataset_info["rewards"] = squared_errors
+            dataset_info["truncated"] = [False] * len(dataset_info["samples"])
+
+        self._save_debug_rollout_data(data, rollout_id=rollout_id, evaluation=True)
+        _log_eval_rollout_data(rollout_id, self.args, data, extra_metrics)
+        del self._pending_regression_evals[rollout_id]
 
     def save(self, rollout_id):
         self.data_source.save(rollout_id)
@@ -748,7 +816,10 @@ class RolloutManager:
         if self.custom_convert_samples_to_train_data_func is not None:
             return self.custom_convert_samples_to_train_data_func(self.args, samples)
 
-        raw_rewards, rewards = self._post_process_rewards(samples)
+        if self.args.loss_type == "regression_loss":
+            raw_rewards = rewards = [0.0] * len(samples)
+        else:
+            raw_rewards, rewards = self._post_process_rewards(samples)
 
         assert len(raw_rewards) == len(samples)
         assert len(rewards) == len(samples)
@@ -776,6 +847,11 @@ class RolloutManager:
             "sample_indices": [sample.index for sample in samples],
             "rollout_ids": rollout_ids,
         }
+        if self.args.loss_type == "regression_loss":
+            train_data["regression_targets"] = [
+                transform_regression_target(sample.label, self.args.regression_target_transform)
+                for sample in samples
+            ]
 
         # loss mask
         # TODO: compress the loss mask
@@ -863,7 +939,7 @@ class RolloutManager:
     def set_train_parallel_config(self, config: dict):
         self.train_parallel_config = config
 
-    def _split_train_data_by_dp(self, data):
+    def _split_train_data_by_dp(self, data, *, global_batch_size: int | None = None):
         """Compute the DP/mbs schedule and package each rank's rollout_data
         into a Ray Box. The schedule itself is computed by
         :func:`build_dp_schedule` so it stays unit-testable without Ray/sglang.
@@ -879,11 +955,12 @@ class RolloutManager:
         total_lengths = [len(t) for t in data["tokens"]]
         data["total_lengths"] = total_lengths
 
+        schedule_global_batch_size = self.args.global_batch_size if global_batch_size is None else global_batch_size
         partitions, micro_batch_indices, num_microbatches, global_batch_sizes = build_dp_schedule(
             self.args,
             self.train_parallel_config,
             total_lengths,
-            global_batch_size=self.args.global_batch_size,
+            global_batch_size=schedule_global_batch_size,
             rollout_indices=data["rollout_ids"],
         )
 
@@ -910,6 +987,7 @@ class RolloutManager:
                 "source_names",
                 "prompt",
                 "teacher_log_probs",
+                "regression_targets",
             ]:
                 if key not in data:
                     continue

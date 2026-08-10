@@ -12,6 +12,7 @@ import types
 import pytest
 
 from slime.utils.types import Sample
+from slime.utils.regression import REGRESSION_MODEL_PREDICTION_KEY
 from slime_plugins.maxrl import regression
 from slime_plugins.maxrl.regression import (
     boxed_gaussian_reward,
@@ -79,6 +80,18 @@ def _with_indices(samples: list[Sample]) -> list[Sample]:
     for index, sample in enumerate(samples):
         sample.index = index
     return samples
+
+
+def _direct_scalar_sample(*, index, target, model_prediction, language="Python"):
+    sample = _sample(
+        group_index=index,
+        index=index,
+        target=target,
+        response=str(model_prediction),
+        language=language,
+    )
+    sample.metadata[REGRESSION_MODEL_PREDICTION_KEY] = model_prediction
+    return sample
 
 
 def _install_fake_wandb(monkeypatch):
@@ -386,6 +399,73 @@ def test_eval_hook_uses_even_group_medians_and_language_mean():
         log_dict["eval-core/spearman/space/CDSS_language_mean"]
         == pytest.approx(0.0)
     )
+
+
+@pytest.mark.unit
+def test_direct_scalar_eval_never_uses_median_and_logs_model_space_mse(monkeypatch):
+    monkeypatch.setattr(
+        regression.np,
+        "median",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("median must not run")),
+    )
+    samples = [
+        _direct_scalar_sample(index=0, target=1.0, model_prediction=1.0, language="Python"),
+        _direct_scalar_sample(index=1, target=2.0, model_prediction=3.0, language="Python"),
+        _direct_scalar_sample(index=2, target=3.0, model_prediction=3.0, language="Rust"),
+        _direct_scalar_sample(index=3, target=4.0, model_prediction=3.0, language="Rust"),
+    ]
+    log_dict = {}
+
+    log_eval_regression_metrics(
+        0,
+        _args(
+            loss_type="regression_loss",
+            regression_target_transform="identity",
+            n_samples_per_eval_prompt=1,
+        ),
+        {"CDSS": {"samples": list(reversed(samples))}},
+        log_dict,
+    )
+
+    assert log_dict["eval-core/mse/space/CDSS"] == pytest.approx(0.5)
+    assert log_dict["eval-core/answer_extraction_rate/space/CDSS"] == 1.0
+    assert log_dict["eval-core/prediction_coverage/space/CDSS"] == 1.0
+    assert log_dict["eval-core/spearman/space/CDSS"] == pytest.approx(0.7745966692)
+    assert log_dict["eval-aux/spearman/cdss_language/Python"] == 1.0
+    assert math.isnan(log_dict["eval-aux/spearman/cdss_language/Rust"])
+
+
+@pytest.mark.unit
+def test_direct_log10p_eval_inverts_raw_metrics_without_clamping_and_saves_both_spaces(tmp_path):
+    samples = [
+        _direct_scalar_sample(index=0, target=0.0, model_prediction=-1.0),
+        _direct_scalar_sample(index=1, target=9.0, model_prediction=1.0),
+        _direct_scalar_sample(index=2, target=99.0, model_prediction=2.0),
+    ]
+    log_dict = {}
+
+    log_eval_regression_metrics(
+        4,
+        _args(
+            loss_type="regression_loss",
+            regression_target_transform="log10p",
+            n_samples_per_eval_prompt=1,
+            sample_save_dir=str(tmp_path),
+        ),
+        {"CDSS": {"samples": samples}},
+        log_dict,
+    )
+
+    assert log_dict["eval-core/mse/space/CDSS"] == pytest.approx(1 / 3)
+    assert log_dict["eval-core/prediction_too_small_ratio/space/CDSS"] == pytest.approx(1 / 3)
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "eval_step_000004.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert records[0]["model_prediction"] == -1.0
+    assert records[0]["prediction"] == pytest.approx(-0.9)
+    assert records[1]["model_prediction"] == 1.0
+    assert records[1]["prediction"] == pytest.approx(9.0)
 
 
 @pytest.mark.unit

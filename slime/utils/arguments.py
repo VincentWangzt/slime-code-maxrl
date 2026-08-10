@@ -818,7 +818,10 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                 "--skip-eval-before-train",
                 action="store_true",
                 default=False,
-                help="Whether to skip evaluation before training.",
+                help=(
+                    "Skip the startup evaluation. By default, setting --eval-interval evaluates the initial model "
+                    "at step 0 or the loaded checkpoint at its saved rollout step before training resumes."
+                ),
             )
             parser.add_argument(
                 "--sample-save-dir",
@@ -928,11 +931,21 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
             parser.add_argument(
                 "--loss-type",
                 type=str,
-                choices=["policy_loss", "sft_loss", "custom_loss"],
+                choices=["policy_loss", "sft_loss", "regression_loss", "custom_loss"],
                 default="policy_loss",
                 help=(
-                    "Choose loss type, currently support ppo policy_loss or sft_loss, "
+                    "Choose policy, SFT, scalar regression, or custom loss, "
                     "if custom_loss is set, we will use the function path from `--custom-loss-function-path`."
+                ),
+            )
+            parser.add_argument(
+                "--regression-target-transform",
+                type=str,
+                choices=["identity", "log10p"],
+                default="identity",
+                help=(
+                    "Target space for regression_loss. identity uses Sample.label directly; "
+                    "log10p uses log10(1 + label) and requires finite non-negative labels."
                 ),
             )
             parser.add_argument(
@@ -1867,6 +1880,49 @@ def _validate_maxrl_args(args) -> None:
         raise ValueError("MaxRL requires advantage computation to remain enabled.")
 
 
+def _validate_regression_args(args) -> None:
+    if args.loss_type != "regression_loss":
+        return
+
+    if args.train_backend != "megatron":
+        raise ValueError("Scalar regression requires --train-backend megatron.")
+    if args.n_samples_per_prompt != 1:
+        raise ValueError("Scalar regression requires --n-samples-per-prompt 1.")
+    if args.n_samples_per_eval_prompt != 1:
+        raise ValueError("Scalar regression requires --n-samples-per-eval-prompt 1.")
+    invalid_eval_datasets = [
+        dataset.name for dataset in args.eval_datasets if dataset.n_samples_per_eval_prompt != 1
+    ]
+    if invalid_eval_datasets:
+        raise ValueError(
+            "Scalar regression requires one sample per prompt for every eval dataset; "
+            f"invalid datasets: {invalid_eval_datasets}."
+        )
+    if not args.untie_embeddings_and_output_weights:
+        raise ValueError("Scalar regression requires --untie-embeddings-and-output-weights.")
+    if not args.debug_train_only:
+        raise ValueError("Scalar regression requires --debug-train-only so SGLang generation remains disabled.")
+    if args.compute_advantages_and_returns:
+        raise ValueError("Scalar regression requires --disable-compute-advantages-and-returns.")
+    if args.save_hf is not None:
+        raise ValueError("Scalar regression does not support --save-hf.")
+    if args.context_parallel_size != 1:
+        raise ValueError("Scalar regression requires --context-parallel-size 1.")
+    if args.calculate_per_token_loss:
+        raise ValueError("Scalar regression uses one scalar per sample; disable --calculate-per-token-loss.")
+    if args.use_critic:
+        raise ValueError("Scalar regression does not use a PPO critic; choose a non-PPO advantage estimator.")
+
+
+def _resolve_bridge_load_path(load: str | None, ref_load: str | None, hf_checkpoint: str) -> str:
+    """Use an existing configured checkpoint, otherwise fall back to the initial model."""
+    if load is not None and os.path.isdir(load):
+        with os.scandir(load) as entries:
+            if any(entries):
+                return load
+    return ref_load or hf_checkpoint
+
+
 def slime_validate_args(args):
     if args.n_samples_per_eval_prompt is None:
         args.n_samples_per_eval_prompt = 1
@@ -1923,8 +1979,14 @@ def slime_validate_args(args):
             # If is a Megatron checkpoint, won't use bridge to load hf weight.
             pass
         else:
-            if args.load is None:
-                args.load = args.ref_load or args.hf_checkpoint
+            configured_load = args.load
+            args.load = _resolve_bridge_load_path(args.load, args.ref_load, args.hf_checkpoint)
+            if configured_load is not None and args.load != configured_load:
+                logger.info(
+                    "Configured load path %s is missing or empty; initialize from %s.",
+                    configured_load,
+                    args.load,
+                )
             # If is a HF checkpoint, set start_rollout_id to 0 here.
             args.start_rollout_id = 0
     else:
@@ -2121,6 +2183,7 @@ def slime_validate_args(args):
             setattr(args, k, v)
 
     _validate_maxrl_args(args)
+    _validate_regression_args(args)
 
     if args.eval_max_context_len is None:
         logger.info(

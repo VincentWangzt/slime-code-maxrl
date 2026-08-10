@@ -105,6 +105,15 @@ The launcher enables W&B project `maxrl-code-regression`. `WANDB_RUN_NAME` in th
 as both the exact W&B run name and the checkpoint directory name under `/data/checkpoints`; the
 runtime environment must provide `WANDB_API_KEY`.
 
+Evaluate the pinned rollout-99 checkpoint without taking another training step:
+
+```bash
+uv run --project scripts/modal bash scripts/modal/examples/run-qwen3-4B-Instruct-2507-cdss-maxrl-eval-step-99-unnormalized-log10p.sh
+```
+
+The eval-only launcher selects `--ckpt-step 99`, logs the result at `eval/step = 99`, and writes
+complete responses under `/data/samples/eval-...-step-99`.
+
 ## Run the examples
 
 Synchronous, colocated actor and rollout on one GPU:

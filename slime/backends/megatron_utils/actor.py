@@ -36,7 +36,7 @@ from .cp_utils import prepare_routed_experts_for_routing_replay, slice_log_prob_
 from .data import DataIterator, get_data_iterator, log_perf_data, log_rollout_data
 from .hf_checkpoint_saver import save_hf_model_to_path
 from .initialize import init, is_megatron_main_rank
-from .loss import compute_advantages_and_returns, get_log_probs_and_entropy, get_values
+from .loss import compute_advantages_and_returns, get_last_token_predictions, get_log_probs_and_entropy, get_values
 from .model import forward_only, initialize_model_and_optimizer, save, train
 from .update_weight.common import named_params_and_buffers
 from .update_weight.update_weight_from_disk import UpdateWeightFromDisk
@@ -250,6 +250,11 @@ class MegatronTrainRayActor(TrainRayActor):
         rollout_data["loss_masks"] = [
             t.to(device=device, dtype=torch.int, non_blocking=True) for t in rollout_data["loss_masks"]
         ]
+        if "regression_targets" in rollout_data:
+            rollout_data["regression_targets"] = [
+                target.to(device=device, dtype=torch.float32, non_blocking=True)
+                for target in rollout_data["regression_targets"]
+            ]
         if "rollout_mask_sums" in rollout_data:
             # Promote precomputed per-rollout mask totals to GPU tensors here
             # (matching loss_masks) so the loss reducer can just divide.
@@ -360,6 +365,42 @@ class MegatronTrainRayActor(TrainRayActor):
                 store_prefix=store_prefix,
                 use_rollout_top_p_replay=True,
             )
+
+    def predict_regression(self, rollout_data_ref: Box) -> dict[str, list]:
+        """Run a forward-only scalar prediction for this worker's DP partition."""
+        if self.args.loss_type != "regression_loss" or self.role != "actor":
+            raise ValueError("predict_regression requires a regression actor.")
+        if self.args.offload_train:
+            self.wake_up()
+        rollout_data = self._get_rollout_data(rollout_data_ref)
+        data_iterator = get_data_iterator(rollout_data)
+        output = forward_only(
+            get_last_token_predictions,
+            self.args,
+            self.model,
+            data_iterator,
+            rollout_data["num_microbatches"],
+        )
+        result: dict[str, list] = {}
+        if (
+            mpu.is_pipeline_last_stage()
+            and mpu.get_tensor_model_parallel_rank() == 0
+            and mpu.get_context_parallel_rank() == 0
+        ):
+            predictions = output.get("predictions", [])
+            if len(predictions) != len(rollout_data["sample_indices"]):
+                raise ValueError(
+                    f"Prediction count {len(predictions)} does not match local sample count "
+                    f"{len(rollout_data['sample_indices'])}."
+                )
+            result = {
+                "sample_indices": [int(index) for index in rollout_data["sample_indices"]],
+                "predictions": [float(value.detach().cpu()) for value in predictions],
+            }
+        if self.args.offload_train:
+            del rollout_data
+            self.sleep()
+        return result
 
     def train(self, rollout_id: int, rollout_data_ref: Box, external_data=None):
         if self.args.debug_rollout_only:

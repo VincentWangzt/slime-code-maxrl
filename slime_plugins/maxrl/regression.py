@@ -16,6 +16,11 @@ import numpy as np
 from slime.rollout.rm_hub.math_utils import extract_answer
 from slime.utils.maxrl import compute_grouped_maxrl_weights
 from slime.utils.metric_utils import compute_rollout_step
+from slime.utils.regression import (
+    REGRESSION_MODEL_PREDICTION_KEY,
+    inverse_regression_prediction,
+    transform_regression_target,
+)
 from slime.utils.types import Sample
 
 _OBSERVATION_METADATA_KEY = "maxrl_regression"
@@ -317,6 +322,64 @@ def _ordered_eval_sample_groups(
     return groups
 
 
+def _direct_scalar_eval_sample_groups(
+    args: Any,
+    samples: Sequence[Sample],
+) -> list[dict[str, Any]]:
+    """Build one scalar prediction per row without response aggregation."""
+    seen_indices: set[int] = set()
+    seen_group_indices: set[int] = set()
+    groups = []
+    if any(type(sample.group_index) is not int or type(sample.index) is not int for sample in samples):
+        raise ValueError("Scalar CDSS evaluation requires integer group_index and index on every sample.")
+    for sample in sorted(samples, key=lambda item: item.index):
+        if sample.index in seen_indices:
+            raise ValueError(f"CDSS evaluation sample index {sample.index} is duplicated.")
+        if sample.group_index in seen_group_indices:
+            raise ValueError(
+                f"Scalar CDSS evaluation group {sample.group_index} contains more than one prediction."
+            )
+        seen_indices.add(sample.index)
+        seen_group_indices.add(sample.group_index)
+
+        target, language = _target_and_language(sample)
+        if not isinstance(sample.metadata, dict) or REGRESSION_MODEL_PREDICTION_KEY not in sample.metadata:
+            raise ValueError(f"CDSS sample {sample.index} is missing its scalar regression prediction.")
+        model_prediction = float(sample.metadata[REGRESSION_MODEL_PREDICTION_KEY])
+        if not math.isfinite(model_prediction):
+            raise ValueError(f"CDSS sample {sample.index} has non-finite scalar prediction {model_prediction!r}.")
+        transform = args.regression_target_transform
+        model_target = transform_regression_target(target, transform)
+        prediction = inverse_regression_prediction(model_prediction, transform)
+        observation = {
+            "target": target,
+            "language": language,
+            "prediction": prediction,
+            "model_target": model_target,
+            "model_prediction": model_prediction,
+            "squared_error": (model_prediction - model_target) ** 2,
+            "extracted": True,
+        }
+        entry = {
+            "sample": sample,
+            "response_rank": 0,
+            "observation": observation,
+            "identifier": _cdss_identifier(sample),
+            "prompt": _json_compatible_prompt(sample),
+            "status": _sample_status_value(sample),
+        }
+        groups.append(
+            {
+                "group_index": sample.group_index,
+                "target": target,
+                "language": language,
+                "prediction": prediction,
+                "entries": [entry],
+            }
+        )
+    return groups
+
+
 def _representative_entry(group: dict[str, Any]) -> dict[str, Any]:
     entries = group["entries"]
     median_prediction = group["prediction"]
@@ -362,10 +425,22 @@ def _render_eval_sample_html(
             quote=True,
         )
         response = html.escape(entry["sample"].response, quote=True)
+        prediction = html.escape(json.dumps(group["prediction"], allow_nan=False), quote=True)
+        scalar_details = ""
+        if "model_prediction" in entry["observation"]:
+            model_prediction = html.escape(
+                json.dumps(entry["observation"]["model_prediction"], allow_nan=False),
+                quote=True,
+            )
+            scalar_details = (
+                f"<section><h2>Metric-space prediction</h2><pre>{prediction}</pre></section>"
+                f"<section><h2>Model-space scalar</h2><pre>{model_prediction}</pre></section>"
+            )
         cards.append(
             '<article class="sample-card">'
             f"<section><h2>Target</h2><pre>{target}</pre></section>"
             f"<section><h2>Prompt</h2><pre>{prompt}</pre></section>"
+            f"{scalar_details}"
             f"<section><h2>Response</h2><pre>{response}</pre></section>"
             "</article>"
         )
@@ -434,6 +509,10 @@ def _write_eval_samples_jsonl(
                     "target": observation["target"],
                     "status": entry["status"],
                 }
+                if "model_prediction" in observation:
+                    record["prediction"] = observation["prediction"]
+                    record["model_target"] = observation["model_target"]
+                    record["model_prediction"] = observation["model_prediction"]
                 output.write(
                     json.dumps(
                         record,
@@ -541,14 +620,19 @@ def log_eval_regression_metrics(
     data: dict[str, dict[str, Any]],
     log_dict: dict[str, Any],
 ) -> bool:
-    """Augment Slime eval logging with CDSS median regression metrics."""
+    """Log CDSS metrics for generated medians or direct scalar predictions."""
     if "CDSS" not in data:
         raise ValueError("The CDSS regression eval hook requires a dataset named 'CDSS'.")
     samples = data["CDSS"].get("samples")
     if not isinstance(samples, list) or not samples:
         raise ValueError("The CDSS regression eval hook requires non-empty samples.")
 
-    groups = _ordered_eval_sample_groups(args, samples)
+    direct_scalar = getattr(args, "loss_type", None) == "regression_loss"
+    groups = (
+        _direct_scalar_eval_sample_groups(args, samples)
+        if direct_scalar
+        else _ordered_eval_sample_groups(args, samples)
+    )
     observations = [
         entry["observation"]
         for group in groups
@@ -578,6 +662,10 @@ def log_eval_regression_metrics(
     )
     log_dict["eval-core/prediction_too_big_ratio/space/CDSS"] = too_big
     log_dict["eval-core/prediction_too_small_ratio/space/CDSS"] = too_small
+    if direct_scalar:
+        log_dict["eval-core/mse/space/CDSS"] = float(
+            np.mean([observation["squared_error"] for observation in observations])
+        )
     log_dict["eval-core/spearman/space/CDSS"] = spearman_or_nan(
         [target for target, _, _ in covered],
         [prediction for _, prediction, _ in covered],

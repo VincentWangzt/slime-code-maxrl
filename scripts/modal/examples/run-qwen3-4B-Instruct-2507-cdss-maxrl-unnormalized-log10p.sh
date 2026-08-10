@@ -10,13 +10,16 @@ cd "${REPO_ROOT}"
 
 source scripts/models/qwen3-4B-Instruct-2507.sh
 
-WANDB_RUN_NAME="qwen3-4B-Instruct-2507-sigma-0p5-bs-128-rollout-16-log-gaussian-unnormalized"
+WANDB_RUN_NAME="qwen3-4B-Instruct-2507-sigma-0p5-bs-128-rollout-32-log-gaussian-unnormalized"
+CHECKPOINT_RUN_NAME="qwen3-4B-Instruct-2507-sigma-1p0-bs-128-rollout-32-log-gaussian-unnormalized"
 
 CKPT_ARGS=(
     --hf-checkpoint /data/models/Qwen3-4B-Instruct-2507
     --ref-load /data/models/Qwen3-4B-Instruct-2507_torch_dist
     --save "/data/checkpoints/${WANDB_RUN_NAME}"
-    # --load "/data/checkpoints/${WANDB_RUN_NAME}"
+    --load "/data/checkpoints/${CHECKPOINT_RUN_NAME}"
+    --ckpt-step 99
+    --override-opt-param-scheduler
     --save-interval 20
 )
 
@@ -37,7 +40,7 @@ ROLLOUT_ARGS=(
 
     --num-rollout 200
     --rollout-batch-size 128
-    --n-samples-per-prompt 16
+    --n-samples-per-prompt 32
     --num-steps-per-rollout 1
     --rollout-max-response-len 2048
     --rollout-temperature 1

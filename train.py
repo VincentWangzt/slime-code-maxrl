@@ -1,9 +1,10 @@
 import ray
 
+from slime.ray.evaluation import run_evaluation
 from slime.ray.placement_group import create_placement_groups, create_rollout_manager, create_training_models
 from slime.utils.arguments import parse_args
 from slime.utils.logging_utils import configure_logger, finish_tracking, init_tracking
-from slime.utils.misc import should_run_periodic_action
+from slime.utils.misc import get_eval_before_train_rollout_id, should_run_periodic_action
 
 
 def train(args):
@@ -32,9 +33,14 @@ def train(args):
     if args.offload_rollout:
         ray.get(rollout_manager.onload_kv.remote())
 
-    # special case for eval-only
-    if args.num_rollout == 0 and args.eval_interval is not None:
-        ray.get(rollout_manager.eval.remote(rollout_id=0))
+    eval_rollout_id = get_eval_before_train_rollout_id(
+        start_rollout_id=args.start_rollout_id,
+        num_rollout=args.num_rollout,
+        eval_interval=args.eval_interval,
+        skip_eval_before_train=args.skip_eval_before_train,
+    )
+    if eval_rollout_id is not None:
+        run_evaluation(args, eval_rollout_id, rollout_manager, actor_model)
 
     def offload_train(actor_trains_this_step):
         # Each model auto-offloads after train() when offload_train is set,
@@ -47,9 +53,6 @@ def train(args):
 
     # train loop.
     for rollout_id in range(args.start_rollout_id, args.num_rollout):
-        if args.eval_interval is not None and rollout_id == 0 and not args.skip_eval_before_train:
-            ray.get(rollout_manager.eval.remote(rollout_id))
-
         rollout_data_ref = ray.get(rollout_manager.generate.remote(rollout_id))
 
         if args.offload_rollout:
@@ -88,7 +91,7 @@ def train(args):
             ray.get(rollout_manager.onload_kv.remote())
 
         if should_run_periodic_action(rollout_id, args.eval_interval, num_rollout_per_epoch):
-            ray.get(rollout_manager.eval.remote(rollout_id))
+            run_evaluation(args, rollout_id, rollout_manager, actor_model)
 
     ray.get(rollout_manager.dispose.remote())
     finish_tracking(args)

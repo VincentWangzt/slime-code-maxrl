@@ -38,6 +38,54 @@ ROLLOUT_TOP_P_TOKEN_KEYS = (
 )
 
 
+def extract_last_token_predictions(logits: torch.Tensor, total_lengths: list[int]) -> torch.Tensor:
+    """Select each packed sample's final real-token scalar, before trailing padding."""
+    if logits.dtype != torch.float32:
+        raise ValueError(f"Scalar-head logits must be float32, got {logits.dtype}.")
+    if logits.ndim != 3 or logits.size(0) != 1 or logits.size(-1) != 1:
+        raise ValueError(f"Expected scalar-head logits with shape [1, T, 1], got {tuple(logits.shape)}.")
+    if not total_lengths:
+        return logits.new_empty((0,))
+    if any(int(length) <= 0 for length in total_lengths):
+        raise ValueError(f"Every regression prompt must contain at least one token, got {total_lengths}.")
+
+    terminal_indices = torch.as_tensor(total_lengths, device=logits.device, dtype=torch.long).cumsum(0) - 1
+    if int(terminal_indices[-1]) >= logits.size(1):
+        raise ValueError(
+            "Packed scalar logits are shorter than the supplied sample lengths: "
+            f"last terminal index={int(terminal_indices[-1])}, packed length={logits.size(1)}."
+        )
+    return logits[0, terminal_indices, 0]
+
+
+def get_last_token_predictions(
+    logits: torch.Tensor,
+    *,
+    args: Namespace,
+    unconcat_tokens: list[torch.Tensor],
+    total_lengths: list[int],
+    response_lengths: list[int],
+    with_entropy: bool = False,
+    non_loss_data: bool = True,
+) -> tuple[torch.Tensor, dict[str, list[torch.Tensor]]]:
+    """Megatron forward-only callback for one scalar per packed prompt."""
+    del with_entropy, non_loss_data
+    if mpu.get_context_parallel_world_size() != 1:
+        raise ValueError("Scalar regression prediction requires context parallelism 1.")
+    if len(unconcat_tokens) != len(total_lengths) or len(total_lengths) != len(response_lengths):
+        raise ValueError("Regression batch fields must have the same sample count.")
+    for tokens, total_length in zip(unconcat_tokens, total_lengths, strict=True):
+        if tokens.numel() != int(total_length):
+            raise ValueError(
+                f"Regression sample token count {tokens.numel()} does not match total_length {total_length}."
+            )
+    if any(int(length) != 1 for length in response_lengths):
+        raise ValueError(f"Regression requires one terminal selection per sample, got {response_lengths}.")
+
+    predictions = extract_last_token_predictions(logits, total_lengths)
+    return logits.new_empty((0,)), {"predictions": list(predictions.unbind())}
+
+
 def get_rollout_top_p_logprob_kwargs(args: Namespace, batch: dict[str, Any]) -> dict[str, Any]:
     if args.rollout_top_p == 1.0:
         return {}
@@ -1220,7 +1268,6 @@ def sft_loss_function(
         response_lengths=response_lengths,
         with_entropy=False,
     )
-
     log_probs = log_probs_and_entropy["log_probs"]
     log_probs = torch.cat(log_probs, dim=0)
     loss = -sum_of_sample_mean(log_probs)
@@ -1237,6 +1284,32 @@ def sft_loss_function(
     )
 
 
+def regression_loss_function(
+    args: Namespace,
+    batch: RolloutBatch,
+    logits: torch.Tensor,
+    sum_of_sample_mean: Callable[[torch.Tensor], torch.Tensor],
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Compute MSE from one final-prompt-token scalar per packed sample."""
+    if mpu.get_context_parallel_world_size() != 1:
+        raise ValueError("Scalar regression loss requires context parallelism 1.")
+    response_lengths = batch["response_lengths"]
+    if any(int(length) != 1 for length in response_lengths):
+        raise ValueError(f"Regression requires one terminal selection per sample, got {response_lengths}.")
+
+    predictions = extract_last_token_predictions(logits, batch["total_lengths"])
+    targets = torch.stack(batch["regression_targets"]).to(device=logits.device, dtype=torch.float32).reshape(-1)
+    if targets.numel() != predictions.numel():
+        raise ValueError(
+            f"Regression target count {targets.numel()} does not match prediction count {predictions.numel()}."
+        )
+    squared_errors = (predictions - targets).square()
+    loss = sum_of_sample_mean(squared_errors)
+    if predictions.numel() == 0:
+        loss = loss + 0 * logits.sum()
+    return loss, {"loss": loss.detach(), "mse": loss.detach()}
+
+
 def loss_function(
     args: Namespace,
     batch: RolloutBatch,
@@ -1246,7 +1319,8 @@ def loss_function(
 ) -> tuple[torch.Tensor, int | torch.Tensor, dict[str, list[str] | torch.Tensor]]:
     """Dispatch to the configured loss and rescale for Megatron integration.
 
-    Selects one of "policy_loss", "value_loss", "sft_loss", or a custom loss
+    Selects one of "policy_loss", "value_loss", "sft_loss", "regression_loss",
+    or a custom loss
     function based on `args.loss_type`, computes the loss and metrics, then
     rescales the loss by micro-batch and parallelism factors to integrate with
     Megatron's gradient accumulation.
@@ -1288,6 +1362,8 @@ def loss_function(
             func = value_loss_function
         case "sft_loss":
             func = sft_loss_function
+        case "regression_loss":
+            func = regression_loss_function
         case "custom_loss":
             func = load_function(args.custom_loss_function_path)
         case _:

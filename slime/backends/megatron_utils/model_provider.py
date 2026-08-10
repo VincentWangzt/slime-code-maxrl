@@ -19,6 +19,7 @@ from megatron.training.arguments import core_transformer_config_from_args
 
 from slime.utils.megatron_bridge_utils import patch_auto_bridge_hf_config
 from slime.utils.misc import load_function
+from slime.utils.regression import uses_scalar_head
 
 
 # Adapt from https://github.com/volcengine/verl/blob/c3b20575d2bc815fcccd84bddb4c0401fc4b632b/verl/models/llama/megatron/layers/parallel_linear.py#L82
@@ -75,8 +76,8 @@ def _get_model_provider_func(
                 model = custom_model_provider(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
             else:
                 model = custom_model_provider(pre_process=pre_process, post_process=post_process)
-            # Apply critic output layer if needed
-            if post_process and role == "critic":
+            # Apply the shared scalar output layer for critics and regression actors.
+            if post_process and uses_scalar_head(args, role):
                 model.output_layer = LinearForLastLayer(
                     input_size=model.config.hidden_size, output_size=1, config=model.config
                 )
@@ -107,10 +108,10 @@ def _get_model_provider_func(
             provider.num_layers_in_last_pipeline_stage = args.decoder_last_pipeline_num_layers
         provider.finalize()
 
-        if role == "critic":
+        if uses_scalar_head(args, role):
             _original_provide = provider.provide
 
-            def _critic_provide(pre_process=True, post_process=True, vp_stage=None):
+            def _scalar_provide(pre_process=True, post_process=True, vp_stage=None):
                 model = _original_provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
                 if post_process:
                     model.output_layer = LinearForLastLayer(
@@ -118,7 +119,7 @@ def _get_model_provider_func(
                     )
                 return model
 
-            return _critic_provide
+            return _scalar_provide
 
         return provider.provide
 
@@ -149,7 +150,7 @@ def _get_model_provider_func(
                 # delegate model construction to it directly (e.g. glm-omni VL model).
                 if callable(result) and "pre_process" in inspect.signature(result).parameters:
                     model = result(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
-                    if post_process and role == "critic":
+                    if post_process and uses_scalar_head(args, role):
                         model.output_layer = LinearForLastLayer(
                             input_size=config.hidden_size, output_size=1, config=config
                         )
@@ -234,7 +235,7 @@ def _get_model_provider_func(
         with build_model_context(**build_model_context_args):
             model = GPTModel(**kwargs)
 
-        if post_process and role == "critic":
+        if post_process and uses_scalar_head(args, role):
             model.output_layer = LinearForLastLayer(input_size=config.hidden_size, output_size=1, config=config)
 
         return model

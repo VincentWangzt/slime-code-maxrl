@@ -1,9 +1,10 @@
 import ray
 
+from slime.ray.evaluation import run_evaluation
 from slime.ray.placement_group import create_placement_groups, create_rollout_manager, create_training_models
 from slime.utils.arguments import parse_args
 from slime.utils.logging_utils import configure_logger, finish_tracking, init_tracking
-from slime.utils.misc import should_run_periodic_action
+from slime.utils.misc import get_eval_before_train_rollout_id, should_run_periodic_action
 
 
 # The framework supports other asynchronous approaches such as fully async (which is shown in examples/full_async).
@@ -28,8 +29,21 @@ def train(args):
     if args.check_weight_update_equal:
         ray.get(rollout_manager.check_weights.remote(action="compare"))
 
+    eval_rollout_id = get_eval_before_train_rollout_id(
+        start_rollout_id=args.start_rollout_id,
+        num_rollout=args.num_rollout,
+        eval_interval=args.eval_interval,
+        skip_eval_before_train=args.skip_eval_before_train,
+    )
+    if eval_rollout_id is not None:
+        run_evaluation(args, eval_rollout_id, rollout_manager, actor_model)
+
     # async train loop.
-    rollout_data_next_future = rollout_manager.generate.remote(args.start_rollout_id)
+    rollout_data_next_future = (
+        rollout_manager.generate.remote(args.start_rollout_id)
+        if args.start_rollout_id < args.num_rollout
+        else None
+    )
     for rollout_id in range(args.start_rollout_id, args.num_rollout):
         # Sync the last generation
         if rollout_data_next_future is not None:
@@ -70,7 +84,7 @@ def train(args):
             actor_model.update_weights()
 
         if should_run_periodic_action(rollout_id, args.eval_interval, num_rollout_per_epoch):
-            ray.get(rollout_manager.eval.remote(rollout_id))
+            run_evaluation(args, rollout_id, rollout_manager, actor_model)
 
     ray.get(rollout_manager.dispose.remote())
     finish_tracking(args)

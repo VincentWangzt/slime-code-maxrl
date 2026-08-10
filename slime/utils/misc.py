@@ -126,6 +126,24 @@ def should_run_periodic_action(
     return (step % interval == 0) or (num_rollout_per_epoch is not None and step % num_rollout_per_epoch == 0)
 
 
+def get_eval_before_train_rollout_id(
+    *,
+    start_rollout_id: int,
+    num_rollout: int,
+    eval_interval: int | None,
+    skip_eval_before_train: bool,
+) -> int | None:
+    """Return the rollout id for startup evaluation, or ``None`` when disabled."""
+    if eval_interval is None:
+        return None
+    if num_rollout != 0 and skip_eval_before_train:
+        return None
+
+    # A checkpoint contains the rollout that just finished, while training
+    # resumes at the following rollout. Fresh-model evaluation remains step 0.
+    return max(start_rollout_id - 1, 0)
+
+
 class Box:
     def __init__(self, inner):
         self._inner = inner

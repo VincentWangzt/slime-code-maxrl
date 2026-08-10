@@ -136,6 +136,18 @@ def test_hf_validate_checks_dense_intermediate_size_when_moe_has_dense_layers(mo
 
 
 @pytest.mark.unit
+def test_hf_validate_allows_intentional_untied_scalar_regression_head(monkeypatch):
+    module = load_arguments_module(monkeypatch)
+    hf_config = make_qwen3_6_hf_config()
+    hf_config.text_config.tie_word_embeddings = True
+
+    with pytest.raises(AssertionError, match="tie_word_embeddings"):
+        module._hf_validate_args(make_qwen3_6_args(loss_type="policy_loss"), hf_config)
+
+    module._hf_validate_args(make_qwen3_6_args(loss_type="regression_loss"), hf_config)
+
+
+@pytest.mark.unit
 def test_allgather_cp_rejects_non_dsa_cp_models(monkeypatch):
     module = load_arguments_module(monkeypatch)
     args = make_allgather_cp_args()
@@ -390,6 +402,78 @@ def test_maxrl_accepts_positive_even_eval_counts(monkeypatch):
     )
 
     module._validate_maxrl_args(args)
+
+
+def _regression_validation_args(**overrides):
+    values = {
+        "loss_type": "regression_loss",
+        "train_backend": "megatron",
+        "n_samples_per_prompt": 1,
+        "n_samples_per_eval_prompt": 1,
+        "eval_datasets": [types.SimpleNamespace(name="CDSS", n_samples_per_eval_prompt=1)],
+        "untie_embeddings_and_output_weights": True,
+        "debug_train_only": True,
+        "compute_advantages_and_returns": False,
+        "save_hf": None,
+        "context_parallel_size": 1,
+        "calculate_per_token_loss": False,
+        "use_critic": False,
+    }
+    values.update(overrides)
+    return types.SimpleNamespace(**values)
+
+
+@pytest.mark.unit
+def test_regression_argument_contract_accepts_native_megatron_mode(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    module._validate_regression_args(_regression_validation_args())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"train_backend": "deepspeed"}, "train-backend"),
+        ({"n_samples_per_prompt": 2}, "n-samples-per-prompt"),
+        ({"n_samples_per_eval_prompt": 2}, "n-samples-per-eval-prompt"),
+        ({"untie_embeddings_and_output_weights": False}, "untie-embeddings"),
+        ({"debug_train_only": False}, "debug-train-only"),
+        ({"compute_advantages_and_returns": True}, "disable-compute"),
+        ({"save_hf": "/tmp/hf"}, "save-hf"),
+        ({"context_parallel_size": 2}, "context-parallel-size"),
+        ({"calculate_per_token_loss": True}, "calculate-per-token-loss"),
+        ({"use_critic": True}, "critic"),
+    ],
+)
+def test_regression_argument_contract_rejects_incompatible_modes(monkeypatch, overrides, message):
+    module = load_slime_arguments_module(monkeypatch)
+    with pytest.raises(ValueError, match=message):
+        module._validate_regression_args(_regression_validation_args(**overrides))
+
+
+@pytest.mark.unit
+def test_bridge_load_path_falls_back_only_when_run_checkpoint_is_unavailable(monkeypatch, tmp_path):
+    module = load_slime_arguments_module(monkeypatch)
+    initial_checkpoint = tmp_path / "initial"
+    initial_checkpoint.mkdir()
+    run_checkpoint = tmp_path / "run"
+
+    assert (
+        module._resolve_bridge_load_path(str(run_checkpoint), str(initial_checkpoint), "unused-hf")
+        == str(initial_checkpoint)
+    )
+
+    run_checkpoint.mkdir()
+    assert (
+        module._resolve_bridge_load_path(str(run_checkpoint), str(initial_checkpoint), "unused-hf")
+        == str(initial_checkpoint)
+    )
+
+    (run_checkpoint / "latest_checkpointed_iteration.txt").write_text("1", encoding="utf-8")
+    assert (
+        module._resolve_bridge_load_path(str(run_checkpoint), str(initial_checkpoint), "unused-hf")
+        == str(run_checkpoint)
+    )
 
 
 @pytest.mark.unit

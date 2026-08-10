@@ -124,6 +124,10 @@ def _hf_validate_args(args, hf_config):
     ]:
         if hf_config_name == "intermediate_size" and not validate_dense_ffn:
             continue
+        if hf_config_name == "tie_word_embeddings" and getattr(args, "loss_type", None) == "regression_loss":
+            # Regression intentionally replaces the tied LM output projection
+            # with an independent scalar head.
+            continue
 
         if hasattr(hf_config, hf_config_name) and hasattr(args, megatron_config_name):
             if not compare_fn(getattr(hf_config, hf_config_name), getattr(args, megatron_config_name)):

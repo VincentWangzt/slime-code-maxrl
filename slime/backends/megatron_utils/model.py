@@ -30,6 +30,7 @@ except ImportError:
     from megatron.core.utils import unwrap_model
 from slime.utils import logging_utils
 from slime.utils.memory_utils import clear_memory
+from slime.utils.regression import uses_scalar_head
 
 from .checkpoint import load_checkpoint, save_checkpoint
 from .cp_utils import reduce_train_step_metrics
@@ -81,7 +82,7 @@ def _with_rollout_top_p_token_keys(args: Namespace, keys: Sequence[str]) -> list
     return [*keys, *ROLLOUT_TOP_P_TOKEN_KEYS]
 
 
-def _iter_critic_output_layers(model: Sequence[DDP]):
+def _iter_scalar_output_layers(model: Sequence[DDP]):
     for chunk_id, module in enumerate(unwrap_model(model)):
         output_layer = getattr(module, "output_layer", None)
         if output_layer is not None:
@@ -122,8 +123,8 @@ except ImportError:
         return get_checkpoint_name(load_dir, iteration, release, return_base_dir=True)
 
 
-def _critic_output_layer_needs_reinit(args: Namespace, model: Sequence[DDP], role: str) -> bool:
-    if role != "critic" or args.load is None:
+def _scalar_output_layer_needs_reinit(args: Namespace, model: Sequence[DDP], role: str) -> bool:
+    if not uses_scalar_head(args, role) or args.load is None:
         return False
 
     from megatron.core.dist_checkpointing.serialization import load_tensors_metadata
@@ -133,7 +134,7 @@ def _critic_output_layer_needs_reinit(args: Namespace, model: Sequence[DDP], rol
         return False
 
     checkpoint_metadata = load_tensors_metadata(str(checkpoint_path))
-    for _chunk_id, output_layer in _iter_critic_output_layers(model):
+    for _chunk_id, output_layer in _iter_scalar_output_layers(model):
         for name in ("weight", "bias"):
             param = getattr(output_layer, name, None)
             if param is None:
@@ -159,7 +160,8 @@ def _critic_output_layer_needs_reinit(args: Namespace, model: Sequence[DDP], rol
                 else f"shape mismatch checkpoint={checkpoint_shape} runtime={expected_shape}"
             )
             logger.warning(
-                "Will reinitialize critic %s after checkpoint load because it is %s",
+                "Will reinitialize %s scalar %s after checkpoint load because it is %s",
+                role,
                 param_name,
                 reason,
             )
@@ -169,11 +171,11 @@ def _critic_output_layer_needs_reinit(args: Namespace, model: Sequence[DDP], rol
 
 
 @torch.no_grad()
-def _reinitialize_critic_output_layer(args: Namespace, model: Sequence[DDP]) -> None:
+def _reinitialize_scalar_output_layer(args: Namespace, model: Sequence[DDP]) -> None:
     init_method_std = getattr(args, "init_method_std", None)
     if init_method_std is None:
         init_method_std = 0.02
-    for _chunk_id, output_layer in _iter_critic_output_layers(model):
+    for _chunk_id, output_layer in _iter_scalar_output_layers(model):
         output_layer.weight.data.normal_(mean=0.0, std=init_method_std)
         if output_layer.bias is not None:
             output_layer.bias.data.zero_()
@@ -593,6 +595,7 @@ def train_one_step(
                     "rollout_log_probs",
                     "teacher_log_probs",
                     "rollout_mask_sums",
+                    "regression_targets",
                 ],
             ),
             args.data_pad_size_multiplier,
@@ -989,7 +992,7 @@ def initialize_model_and_optimizer(
 
     model, optimizer, opt_param_scheduler = setup_model_and_optimizer(args, role)
     model[0].role = role
-    reinit_critic_output_layer = _critic_output_layer_needs_reinit(args, model, role)
+    reinit_scalar_output_layer = _scalar_output_layer_needs_reinit(args, model, role)
     clear_memory()
     iteration, _ = load_checkpoint(
         model,
@@ -998,8 +1001,8 @@ def initialize_model_and_optimizer(
         checkpointing_context={},
         skip_load_to_model_and_opt=False,
     )
-    if reinit_critic_output_layer:
-        _reinitialize_critic_output_layer(args, model)
+    if reinit_scalar_output_layer:
+        _reinitialize_scalar_output_layer(args, model)
         if (args.fp16 or args.bf16) and optimizer is not None:
             optimizer.reload_model_params()
     clear_memory()

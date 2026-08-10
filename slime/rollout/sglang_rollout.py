@@ -1,7 +1,6 @@
 import asyncio
 import copy
 import inspect
-import json
 import logging
 import uuid
 from argparse import Namespace
@@ -18,7 +17,6 @@ from slime.backends.sglang_utils.server_control import abort_servers_until_idle
 from slime.rollout.base_types import RolloutFnEvalOutput, RolloutFnTrainOutput
 from slime.rollout.filter_hub.base_types import MetricGatherer, call_dynamic_filter
 from slime.utils.async_utils import run
-from slime.utils.data import Dataset
 from slime.utils.eval_config import EvalDatasetConfig
 from slime.utils.http_utils import get, get_rollout_num_engines, post
 from slime.utils.misc import SingletonMeta, load_function
@@ -32,6 +30,7 @@ from slime.utils.trace_utils import build_sglang_meta_trace_attrs, trace_functio
 from slime.utils.types import Sample
 
 from .rm_hub import async_rm, batched_async_rm
+from .eval_dataset import get_eval_prompt_dataset
 
 __all__ = ["generate_rollout", "get_model_url"]
 
@@ -467,9 +466,6 @@ async def generate_rollout_async(
     return RolloutFnTrainOutput(samples=data, metrics=metric_gatherer.collect()), aborted_samples
 
 
-EVAL_PROMPT_DATASET = {}
-
-
 async def eval_rollout(args: Namespace, rollout_id: int) -> tuple[dict[str, dict[str, list[Any]]], list[list[Sample]]]:
     assert not args.group_rm, "Group RM is not supported for eval rollout"
 
@@ -495,49 +491,7 @@ async def eval_rollout_single_dataset(
     """
     assert not args.group_rm, "Group RM is not supported for eval rollout"
 
-    global EVAL_PROMPT_DATASET
-
-    eval_multimodal_keys = (
-        dataset_cfg.multimodal_keys if dataset_cfg.multimodal_keys is not None else args.multimodal_keys
-    )
-    eval_apply_chat_template = (
-        dataset_cfg.apply_chat_template if dataset_cfg.apply_chat_template is not None else args.apply_chat_template
-    )
-    eval_apply_chat_template_kwargs = (
-        dataset_cfg.apply_chat_template_kwargs
-        if dataset_cfg.apply_chat_template_kwargs is not None
-        else args.apply_chat_template_kwargs
-    )
-
-    cache_key = dataset_cfg.cache_key + (
-        args.hf_checkpoint,
-        eval_apply_chat_template,
-        json.dumps(eval_multimodal_keys, sort_keys=True) if eval_multimodal_keys is not None else None,
-        (
-            json.dumps(eval_apply_chat_template_kwargs, sort_keys=True)
-            if eval_apply_chat_template_kwargs is not None
-            else None
-        ),
-    )
-    if cache_key not in EVAL_PROMPT_DATASET:
-        tokenizer = load_tokenizer(args.hf_checkpoint, trust_remote_code=True)
-        processor = load_processor(args.hf_checkpoint, trust_remote_code=True)
-        EVAL_PROMPT_DATASET[cache_key] = Dataset(
-            path=dataset_cfg.path,
-            tokenizer=tokenizer,
-            processor=processor,
-            max_length=args.eval_max_prompt_len,
-            prompt_key=dataset_cfg.input_key,
-            label_key=dataset_cfg.label_key,
-            multimodal_keys=eval_multimodal_keys,
-            metadata_key=dataset_cfg.metadata_key,
-            tool_key=dataset_cfg.tool_key,
-            apply_chat_template=eval_apply_chat_template,
-            apply_chat_template_kwargs=eval_apply_chat_template_kwargs,
-            message_processor=dataset_cfg.message_processor,
-            fail_on_long_prompt=dataset_cfg.message_processor is not None,
-        )
-    dataset = EVAL_PROMPT_DATASET[cache_key]
+    dataset = get_eval_prompt_dataset(args, dataset_cfg)
 
     base_sampling_params = dict(
         temperature=dataset_cfg.temperature,

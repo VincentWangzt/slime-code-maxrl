@@ -147,6 +147,24 @@ class RayTrainGroup:
             for actor in self._actor_handlers
         ]
 
+    def predict_regression(self, rollout_data_ref) -> list[tuple[int, float]]:
+        """Run scalar prediction on all workers and merge DP-owner payloads."""
+        worker_outputs = ray.get(
+            [actor.predict_regression.remote(rollout_data_ref) for actor in self._actor_handlers]
+        )
+        indexed_predictions = []
+        for output in worker_outputs:
+            if not output:
+                continue
+            indices = output["sample_indices"]
+            predictions = output["predictions"]
+            if len(indices) != len(predictions):
+                raise ValueError(
+                    f"Regression worker returned {len(indices)} indices and {len(predictions)} predictions."
+                )
+            indexed_predictions.extend(zip(indices, predictions, strict=True))
+        return indexed_predictions
+
     def save_model(self, rollout_id, force_sync=False):
         """Save actor model"""
         ret = ray.get([actor.save_model.remote(rollout_id, force_sync=force_sync) for actor in self._actor_handlers])
