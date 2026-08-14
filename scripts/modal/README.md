@@ -65,7 +65,7 @@ for the completed Parquet files, reports, and plot images. Upload one cutoff wit
 uv run --project scripts/modal modal run scripts/modal/upload_forecastbench.py --cutoff 250801
 ```
 
-The uploader validates all seven local artifacts before connecting, then overwrites that cutoff in
+The uploader validates all six local artifacts before connecting, then overwrites that cutoff in
 `/forecast_data/outputs/` on the `code-maxrl-slime` Volume. It performs no remote preprocessing and
 requests no Modal compute. The ForecastBench training launchers use starting cutoff `250801` by default; set
 `FORECASTBENCH_CUTOFF` to another uploaded `YYMMDD` tag to select a different dataset window.

@@ -41,8 +41,8 @@ time-evaluation rows. The event split is event-constrained: its IDs never occur 
 deterministically shuffled with `--seed` (default `42`).
 
 Combination prompts are excluded because their array IDs and direction-specific outcomes do not fit the scalar
-`id`/`resolved_value` schema. Conflicting labels or dates fail explicitly, and all exclusion counts are written to
-the analysis JSON.
+`id`/`resolved_value` schema. Conflicting labels or dates fail explicitly. Dataset provenance and split settings
+are stored in each Parquet file's metadata.
 
 ## Local commands
 
@@ -89,7 +89,6 @@ analysis. For cutoff `2025-08-01`, the files are:
 forecastbench_train_cutoff_250801.parquet
 forecastbench_eval_time_cutoff_250801.parquet
 forecastbench_eval_event_cutoff_250801.parquet
-forecastbench_analysis_cutoff_250801.json
 forecastbench_analysis_cutoff_250801.txt
 forecastbench_dist_cutoff_250801.png
 forecastbench_tokens_cutoff_250801.png
@@ -98,7 +97,9 @@ forecastbench_tokens_cutoff_250801.png
 The distribution image contains real Matplotlib bar charts for binary outcomes, question rows per event ID, and
 resolution dates. The token image contains a bar chart for each token-length field. Numeric and date ranges are
 derived from the observed data and divided into at most `--plot-bins` bins (default `20`); no fixed token or date
-range is baked into the code. The JSON report records the same adaptive bins.
+range is baked into the code. The text report compares row counts, event IDs, average questions per ID, average
+input tokens, positive ratios, and date ranges across the three splits. Its per-source table also includes average
+questions per event ID.
 
 Each Parquet file has exactly these columns:
 
@@ -115,7 +116,7 @@ Each Parquet file has exactly these columns:
 
 ## Optional Modal upload
 
-Preparation remains local. To make one completed cutoff available to Modal training, upload only its seven output
+Preparation remains local. To make one completed cutoff available to Modal training, upload only its six output
 artifacts:
 
 ```bash

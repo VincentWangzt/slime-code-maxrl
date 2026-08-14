@@ -19,8 +19,8 @@ from forecastbench_data.pipeline import (
 from forecastbench_data.reporting import (
     build_analysis,
     render_analysis,
-    write_analysis_files,
     write_analysis_plots,
+    write_analysis_report,
 )
 
 PROJECT_DIRECTORY = Path(__file__).resolve().parents[2]
@@ -136,26 +136,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         frame=frame,
         split=split,
         cutoff_date=arguments.cutoff_date,
-        counters=build.counters,
-        question_sets=build.question_sets,
-        dedupe_keep=arguments.dedupe_keep,
         tokenizer_name=arguments.tokenizer,
-        source_revision=revision,
-        minimum_time_eval_size=arguments.minimum_time_eval_size,
-        event_eval_size=arguments.event_eval_size,
-        seed=arguments.seed,
         plot_bins=arguments.plot_bins,
         distribution_plot=paths.distribution_plot,
         token_plot=paths.token_plot,
     )
     report_console = Console(record=True, width=120)
     render_analysis(analysis, report_console)
-    write_analysis_files(
-        analysis,
-        report_console.export_text(styles=False),
-        paths.analysis_json,
-        paths.analysis_text,
-    )
+    write_analysis_report(report_console.export_text(styles=False), paths.analysis_text)
     console.print("Wrote:")
     for path in paths.all():
         console.print(f"  {path.resolve()}")

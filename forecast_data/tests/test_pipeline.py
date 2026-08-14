@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import pyarrow.parquet as pq
+from rich.console import Console
 
 from forecastbench_data.pipeline import (
     OUTPUT_COLUMNS,
@@ -16,7 +17,12 @@ from forecastbench_data.pipeline import (
     split_dataset,
     write_parquet_dataset,
 )
-from forecastbench_data.reporting import write_analysis_plots
+from forecastbench_data.reporting import (
+    build_analysis,
+    render_analysis,
+    write_analysis_plots,
+    write_analysis_report,
+)
 
 
 class WhitespaceTokenizer:
@@ -158,6 +164,57 @@ def test_output_paths_are_terse_and_use_two_digit_cutoff_year(tmp_path: Path) ->
     assert paths.train.name == "forecastbench_train_cutoff_250801.parquet"
     assert paths.eval_time.name == "forecastbench_eval_time_cutoff_250801.parquet"
     assert paths.eval_event.name == "forecastbench_eval_event_cutoff_250801.parquet"
+    assert paths.analysis_text.name == "forecastbench_analysis_cutoff_250801.txt"
+    assert len(paths.all()) == 6
+    assert not any(path.suffix == ".json" for path in paths.all())
+
+
+def test_analysis_report_has_source_density_and_split_metrics_without_redundant_token_table(
+    tmp_path: Path,
+) -> None:
+    frame = _split_frame()
+    frame["input_tokens"] = range(100, 100 + len(frame))
+    split = split_dataset(frame, train_test_split_time=date(2024, 1, 2), event_eval_size=5, seed=7)
+    analysis = build_analysis(
+        frame=frame,
+        split=split,
+        cutoff_date=date(2023, 12, 31),
+        tokenizer_name="test-tokenizer",
+        plot_bins=4,
+        distribution_plot=tmp_path / "dist.png",
+        token_plot=tmp_path / "tokens.png",
+    )
+
+    source = analysis["per_source"][0]
+    assert source["question_families"] == 6
+    assert source["average_questions_per_id"] == 2.666667
+    assert "resolved_0" not in source
+    assert "resolved_1" not in source
+    assert "p95_input_tokens" not in source
+
+    split_metrics = {row["name"]: row for row in analysis["split_metrics"]}
+    assert split_metrics["Train"]["rows"] == 8
+    assert split_metrics["Eval event"]["rows"] == 4
+    assert split_metrics["Eval time"]["rows"] == 4
+    assert split_metrics["Train"]["average_questions_per_id"] == 2.0
+    assert "total_input_tokens" not in split_metrics["Train"]
+
+    console = Console(record=True, width=120)
+    render_analysis(analysis, console)
+    rendered = console.export_text(styles=False)
+    assert "Questions/ID" in rendered
+    assert "Positive ratio" in rendered
+    assert "Split metrics (input tokens: test-tokenizer)" in rendered
+    assert "Total tokens" not in rendered
+    assert "Token lengths (" not in rendered
+    assert "P95 tokens" not in rendered
+
+    report = tmp_path / "analysis.txt"
+    write_analysis_report(rendered, report)
+    saved_report = report.read_text(encoding="utf-8")
+    assert all(line == line.rstrip() for line in saved_report.splitlines())
+    expected_report = "\n".join(line.rstrip() for line in rendered.splitlines()) + "\n"
+    assert saved_report == expected_report
 
 
 def _write_round(raw: Path, round_date: str, questions: list[dict[str, object]], resolutions: list[dict[str, object]]) -> None:

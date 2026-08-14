@@ -14,7 +14,6 @@ ARTIFACT_PATTERNS = (
     "forecastbench_train_cutoff_{cutoff}.parquet",
     "forecastbench_eval_time_cutoff_{cutoff}.parquet",
     "forecastbench_eval_event_cutoff_{cutoff}.parquet",
-    "forecastbench_analysis_cutoff_{cutoff}.json",
     "forecastbench_analysis_cutoff_{cutoff}.txt",
     "forecastbench_dist_cutoff_{cutoff}.png",
     "forecastbench_tokens_cutoff_{cutoff}.png",

@@ -69,7 +69,6 @@ class OutputPaths:
     train: Path
     eval_time: Path
     eval_event: Path
-    analysis_json: Path
     analysis_text: Path
     distribution_plot: Path
     token_plot: Path
@@ -79,7 +78,6 @@ class OutputPaths:
             self.train,
             self.eval_time,
             self.eval_event,
-            self.analysis_json,
             self.analysis_text,
             self.distribution_plot,
             self.token_plot,
@@ -299,7 +297,6 @@ def output_paths(output_directory: Path, cutoff_date: date) -> OutputPaths:
         train=output_directory / f"forecastbench_train_{suffix}.parquet",
         eval_time=output_directory / f"forecastbench_eval_time_{suffix}.parquet",
         eval_event=output_directory / f"forecastbench_eval_event_{suffix}.parquet",
-        analysis_json=output_directory / f"forecastbench_analysis_{suffix}.json",
         analysis_text=output_directory / f"forecastbench_analysis_{suffix}.txt",
         distribution_plot=output_directory / f"forecastbench_dist_{suffix}.png",
         token_plot=output_directory / f"forecastbench_tokens_{suffix}.png",

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
 import tempfile
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +11,7 @@ import pandas as pd
 from rich.console import Console
 from rich.table import Table
 
-from forecastbench_data.pipeline import DatasetSplit, FAMILY_COLUMNS, OUTPUT_COLUMNS, TOKEN_COLUMNS
+from forecastbench_data.pipeline import DatasetSplit, FAMILY_COLUMNS, TOKEN_COLUMNS
 
 
 def build_analysis(
@@ -20,14 +19,7 @@ def build_analysis(
     frame: pd.DataFrame,
     split: DatasetSplit,
     cutoff_date: date,
-    counters: dict[str, int],
-    question_sets: tuple[str, ...],
-    dedupe_keep: str,
     tokenizer_name: str,
-    source_revision: str | None,
-    minimum_time_eval_size: int,
-    event_eval_size: int,
-    seed: int,
     plot_bins: int,
     distribution_plot: Path,
     token_plot: Path,
@@ -35,104 +27,41 @@ def build_analysis(
     _validate_bin_count(plot_bins)
     per_source: list[dict[str, Any]] = []
     for source, group in frame.groupby("source", sort=True):
-        labels = group["resolved_value"].value_counts()
+        questions_per_id = group.groupby(list(FAMILY_COLUMNS), sort=True).size()
         per_source.append(
             {
                 "source": source,
                 "rows": int(len(group)),
                 "share_percent": _round(100.0 * len(group) / len(frame)),
-                "resolved_0": int(labels.get(0, 0)),
-                "resolved_1": int(labels.get(1, 0)),
+                "question_families": int(len(questions_per_id)),
+                "average_questions_per_id": _round(questions_per_id.mean()),
                 "positive_rate": _round(group["resolved_value"].mean()),
                 "median_input_tokens": _round(group["input_tokens"].median()),
-                "p95_input_tokens": _round(group["input_tokens"].quantile(0.95)),
-                "max_input_tokens": int(group["input_tokens"].max()),
             }
         )
     per_source.sort(key=lambda row: (-row["rows"], row["source"]))
 
-    all_families = _question_families(frame)
-    train_families = _question_families(split.train)
-    time_families = _question_families(split.eval_time)
-    event_families = _question_families(split.eval_event)
-    questions_per_id = frame.groupby(list(FAMILY_COLUMNS), sort=True).size()
-    train_questions_per_id = split.train.groupby(list(FAMILY_COLUMNS), sort=True).size()
-
     return {
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "source": {
-            "repository": "https://github.com/forecastingresearch/forecastbench-datasets",
-            "revision": source_revision,
-            "question_sets": list(question_sets),
-        },
         "selection": {
             "cutoff_date": cutoff_date.isoformat(),
-            "cutoff_rule": "resolved_date > cutoff_date is included",
             "train_test_split_time": split.train_test_split_time.isoformat(),
             "train_test_split_time_source": (
                 "automatic" if split.split_time_is_automatic else "explicit"
             ),
-            "train_test_split_rule": "resolved_date > train_test_split_time goes to eval_time",
-            "automatic_train_test_split_rule": (
-                "latest observed resolved_date with more than minimum_time_eval_size later rows"
-            ),
-            "minimum_time_eval_size": minimum_time_eval_size,
-            "requires_resolved_true": True,
-            "allowed_resolved_values": [0, 1],
-            "composite_questions_included": False,
-            "repeated_instance_dedupe_keep": dedupe_keep,
         },
-        "filter_funnel": counters,
         "dataset": {
             "rows": int(len(frame)),
-            "columns": list(OUTPUT_COLUMNS),
-            "sources": int(frame["source"].nunique()),
-            "question_families": len(all_families),
+            "question_families": len(_question_families(frame)),
             "resolved_date_range": _date_range(frame),
-            "missing_freeze_values": int(frame["freeze_value"].isna().sum()),
-            "missing_backgrounds": int(frame["background"].map(_is_missing_text).sum()),
-            "missing_source_intros": int(frame["source_intro"].map(_is_missing_text).sum()),
+            "resolved_value_distribution": _label_distribution(frame),
         },
-        "distributions": {
-            "resolved_value": _label_distribution(frame),
-            "questions_per_id": _numeric_histogram(questions_per_id, plot_bins),
-            "resolved_date": _date_histogram(frame["resolved_date"], plot_bins),
-        },
-        "tokenization": {
-            "tokenizer": tokenizer_name,
-            "add_special_tokens": False,
-            "combined_input_format": (
-                "Source introduction:\\n{source_intro}\\n\\nQuestion:\\n{question}"
-                "\\n\\nBackground:\\n{background}"
-            ),
-            "statistics": {column: _describe(frame[column]) for column in TOKEN_COLUMNS},
-            "histograms": {column: _numeric_histogram(frame[column], plot_bins) for column in TOKEN_COLUMNS},
-        },
+        "tokenizer": tokenizer_name,
         "per_source": per_source,
-        "split": {
-            "method": "date holdout, then random whole-event holdout and family-level decontamination",
-            "event_decontamination_key": list(FAMILY_COLUMNS),
-            "seed": seed,
-            "rows_shuffled": True,
-            "train_rows_deduplicated": False,
-            "requested_event_eval_rows": event_eval_size,
-            "train_rows": int(len(split.train)),
-            "time_eval_rows": int(len(split.eval_time)),
-            "event_eval_rows": int(len(split.eval_event)),
-            "train_resolved_date_range": _date_range(split.train),
-            "time_eval_resolved_date_range": _date_range(split.eval_time),
-            "event_eval_resolved_date_range": _date_range(split.eval_event),
-            "train_question_families": len(train_families),
-            "time_eval_question_families": len(time_families),
-            "event_eval_question_families": len(event_families),
-            "train_rows_per_question_family": _describe(train_questions_per_id),
-            "train_event_family_overlap": len(train_families & event_families),
-            "train_time_family_overlap": len(train_families & time_families),
-            "time_event_family_overlap": len(time_families & event_families),
-            "train_resolved_value_distribution": _label_distribution(split.train),
-            "time_eval_resolved_value_distribution": _label_distribution(split.eval_time),
-            "event_eval_resolved_value_distribution": _label_distribution(split.eval_event),
-        },
+        "split_metrics": [
+            _split_metrics("Train", split.train),
+            _split_metrics("Eval event", split.eval_event),
+            _split_metrics("Eval time", split.eval_time),
+        ],
         "plots": {
             "adaptive_bin_count": plot_bins,
             "distribution": distribution_plot.name,
@@ -144,7 +73,6 @@ def build_analysis(
 def render_analysis(analysis: dict[str, Any], console: Console) -> None:
     selection = analysis["selection"]
     dataset = analysis["dataset"]
-    split = analysis["split"]
     summary = Table(title="ForecastBench prepared dataset")
     summary.add_column("Metric")
     summary.add_column("Value", justify="right")
@@ -157,55 +85,53 @@ def render_analysis(analysis: dict[str, Any], console: Console) -> None:
     )
     summary.add_row("Resolved binary rows", f"{dataset['rows']:,}")
     summary.add_row("Event IDs", f"{dataset['question_families']:,}")
-    summary.add_row("Train rows", f"{split['train_rows']:,}")
-    summary.add_row("Train event IDs", f"{split['train_question_families']:,}")
-    summary.add_row("Time-eval rows", f"{split['time_eval_rows']:,}")
-    summary.add_row("Event-eval rows", f"{split['event_eval_rows']:,}")
     console.print(summary)
 
     label_table = Table(title="Resolved values")
     label_table.add_column("Value")
     label_table.add_column("Rows", justify="right")
     label_table.add_column("Share", justify="right")
-    for row in analysis["distributions"]["resolved_value"]:
+    for row in dataset["resolved_value_distribution"]:
         label_table.add_row(str(row["value"]), f"{row['rows']:,}", f"{row['share_percent']:.2f}%")
     console.print(label_table)
 
-    token_table = Table(title=f"Token lengths ({analysis['tokenization']['tokenizer']})")
-    token_table.add_column("Field")
-    for column in ("min", "mean", "median", "p90", "p95", "max"):
-        token_table.add_column(column, justify="right")
-    for field, values in analysis["tokenization"]["statistics"].items():
-        token_table.add_row(
-            field,
-            str(values["min"]),
-            f"{values['mean']:.1f}",
-            f"{values['median']:.1f}",
-            f"{values['p90']:.1f}",
-            f"{values['p95']:.1f}",
-            str(values["max"]),
+    split_table = Table(title=f"Split metrics (input tokens: {analysis['tokenizer']})")
+    split_table.add_column("Split")
+    split_table.add_column("Rows", justify="right")
+    split_table.add_column("Event IDs", justify="right")
+    split_table.add_column("Questions/ID", justify="right")
+    split_table.add_column("Avg tokens/row", justify="right")
+    split_table.add_column("Positive ratio", justify="right")
+    split_table.add_column("Resolved dates")
+    for row in analysis["split_metrics"]:
+        split_table.add_row(
+            row["name"],
+            f"{row['rows']:,}",
+            f"{row['question_families']:,}",
+            f"{row['average_questions_per_id']:.2f}",
+            f"{row['average_input_tokens']:.1f}",
+            f"{row['positive_rate']:.3f}",
+            f"{row['resolved_date_range']['start']} to {row['resolved_date_range']['end']}",
         )
-    console.print(token_table)
+    console.print(split_table)
 
     source_table = Table(title="Per-source metrics")
     source_table.add_column("Source")
     source_table.add_column("Rows", justify="right")
     source_table.add_column("Share", justify="right")
-    source_table.add_column("0", justify="right")
-    source_table.add_column("1", justify="right")
-    source_table.add_column("Positive", justify="right")
-    source_table.add_column("Median tokens", justify="right")
-    source_table.add_column("P95 tokens", justify="right")
+    source_table.add_column("Event IDs", justify="right")
+    source_table.add_column("Questions/ID", justify="right")
+    source_table.add_column("Positive ratio", justify="right")
+    source_table.add_column("Median input tokens", justify="right")
     for row in analysis["per_source"]:
         source_table.add_row(
             row["source"],
             f"{row['rows']:,}",
             f"{row['share_percent']:.2f}%",
-            f"{row['resolved_0']:,}",
-            f"{row['resolved_1']:,}",
+            f"{row['question_families']:,}",
+            f"{row['average_questions_per_id']:.2f}",
             f"{row['positive_rate']:.3f}",
             f"{row['median_input_tokens']:.0f}",
-            f"{row['p95_input_tokens']:.0f}",
         )
     console.print(source_table)
     console.print(
@@ -305,9 +231,12 @@ def write_analysis_plots(
         plt.close(token_figure)
 
 
-def write_analysis_files(analysis: dict[str, Any], rendered_text: str, json_path: Path, text_path: Path) -> None:
-    _atomic_write_text(json_path, json.dumps(analysis, indent=2, ensure_ascii=False) + "\n")
-    _atomic_write_text(text_path, rendered_text)
+def write_analysis_report(rendered_text: str, path: Path) -> None:
+    lines = (line.rstrip() for line in rendered_text.splitlines())
+    normalized = "\n".join(lines)
+    if rendered_text.endswith("\n"):
+        normalized += "\n"
+    _atomic_write_text(path, normalized)
 
 
 def _draw_histogram_bar(
@@ -338,43 +267,6 @@ def _save_figure(figure: Any, path: Path) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
-def _describe(series: pd.Series) -> dict[str, int | float]:
-    values = series.to_numpy(dtype=np.float64)
-    return {
-        "min": int(values.min()),
-        "mean": _round(values.mean()),
-        "median": _round(np.median(values)),
-        "p90": _round(np.quantile(values, 0.90)),
-        "p95": _round(np.quantile(values, 0.95)),
-        "max": int(values.max()),
-    }
-
-
-def _numeric_histogram(series: pd.Series, bin_count: int) -> list[dict[str, int | float | str]]:
-    values = series.to_numpy(dtype=np.float64)
-    counts, edges = _adaptive_histogram_arrays(values, bin_count)
-    return [
-        {
-            "range": f"{_format_number(edges[index])}-{_format_number(edges[index + 1])}",
-            "lower": _round(edges[index]),
-            "upper": _round(edges[index + 1]),
-            "rows": int(count),
-        }
-        for index, count in enumerate(counts)
-    ]
-
-
-def _date_histogram(series: pd.Series, bin_count: int) -> list[dict[str, int | str]]:
-    values = np.asarray([value.toordinal() for value in series], dtype=np.float64)
-    counts, edges = _adaptive_histogram_arrays(values, bin_count)
-    rows: list[dict[str, int | str]] = []
-    for index, count in enumerate(counts):
-        lower = date.fromordinal(max(1, int(np.floor(edges[index]))))
-        upper = date.fromordinal(max(1, int(np.ceil(edges[index + 1]))))
-        rows.append({"range": f"{lower.isoformat()}-{upper.isoformat()}", "rows": int(count)})
-    return rows
-
-
 def _adaptive_histogram_arrays(values: np.ndarray, bin_count: int) -> tuple[np.ndarray, np.ndarray]:
     _validate_bin_count(bin_count)
     if values.size == 0:
@@ -403,6 +295,19 @@ def _question_families(frame: pd.DataFrame) -> set[tuple[str, str]]:
     return set(zip(frame["source"], frame["id"], strict=True))
 
 
+def _split_metrics(name: str, frame: pd.DataFrame) -> dict[str, Any]:
+    questions_per_id = frame.groupby(list(FAMILY_COLUMNS), sort=True).size()
+    return {
+        "name": name,
+        "rows": int(len(frame)),
+        "question_families": int(len(questions_per_id)),
+        "average_questions_per_id": _round(questions_per_id.mean()),
+        "average_input_tokens": _round(frame["input_tokens"].mean()),
+        "positive_rate": _round(frame["resolved_value"].mean()),
+        "resolved_date_range": _date_range(frame),
+    }
+
+
 def _date_range(frame: pd.DataFrame) -> dict[str, str]:
     return {
         "start": frame["resolved_date"].min().isoformat(),
@@ -415,16 +320,8 @@ def _validate_bin_count(bin_count: int) -> None:
         raise ValueError(f"bin_count must be positive, got {bin_count}")
 
 
-def _format_number(value: float) -> str:
-    return f"{value:.1f}" if not value.is_integer() else str(int(value))
-
-
 def _round(value: Any) -> float:
     return round(float(value), 6)
-
-
-def _is_missing_text(value: str) -> bool:
-    return not value.strip() or value.strip().upper() == "N/A"
 
 
 def _atomic_write_text(path: Path, content: str) -> None:

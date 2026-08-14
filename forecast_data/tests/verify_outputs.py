@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import date
 from pathlib import Path
 
@@ -34,13 +33,22 @@ def main() -> None:
     }
     tables = {name: pq.read_table(path) for name, path in paths.items()}
 
-    for table in tables.values():
+    for name, table in tables.items():
         assert table.column_names == EXPECTED_COLUMNS
         assert str(table.schema.field("freeze_value").type) == "string"
         assert str(table.schema.field("resolved_value").type) == "int8"
         assert str(table.schema.field("resolved_date").type) == "date32[day]"
         assert set(table["resolved_value"].to_pylist()) <= {0, 1}
         assert min(table["resolved_date"].to_pylist()) > arguments.cutoff_date
+        metadata = table.schema.metadata or {}
+        assert metadata[b"forecastbench_cutoff_date"].decode() == arguments.cutoff_date.isoformat()
+        assert (
+            metadata[b"forecastbench_train_test_split_time"].decode()
+            == arguments.train_test_split_time.isoformat()
+        )
+        assert metadata[b"forecastbench_event_decontamination_key"] == b"source,id"
+        assert metadata[b"forecastbench_training_rows_deduplicated"] == b"false"
+        assert metadata[b"forecastbench_split"].decode() == name
         for field in ("question", "background", "source_intro"):
             assert not any(
                 "{resolution_date}" in text or "{forecast_due_date}" in text
@@ -69,31 +77,25 @@ def main() -> None:
     assert not _is_canonically_sorted(eval_time)
     assert not _is_canonically_sorted(eval_event)
 
-    analysis_path = arguments.output_dir / f"forecastbench_analysis_cutoff_{tag}.json"
-    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
-    assert analysis["selection"]["cutoff_date"] == arguments.cutoff_date.isoformat()
-    assert analysis["selection"]["train_test_split_time"] == arguments.train_test_split_time.isoformat()
-    assert analysis["split"]["event_decontamination_key"] == ["source", "id"]
-    assert analysis["split"]["train_event_family_overlap"] == 0
-    assert analysis["split"]["train_rows_deduplicated"] is False
-    assert analysis["split"]["train_rows"] == train.num_rows
-    assert analysis["split"]["time_eval_rows"] == eval_time.num_rows
-    assert analysis["split"]["event_eval_rows"] == eval_event.num_rows
-    assert analysis["split"]["rows_shuffled"] is True
-    assert analysis["dataset"]["rows"] == train.num_rows + eval_time.num_rows + eval_event.num_rows
-
-    all_dates = (
-        train["resolved_date"].to_pylist()
-        + eval_time["resolved_date"].to_pylist()
-        + eval_event["resolved_date"].to_pylist()
-    )
-    assert analysis["dataset"]["resolved_date_range"] == {
-        "start": min(all_dates).isoformat(),
-        "end": max(all_dates).isoformat(),
+    report_path = arguments.output_dir / f"forecastbench_analysis_cutoff_{tag}.txt"
+    report = report_path.read_text(encoding="utf-8")
+    expected_report_values = {
+        arguments.cutoff_date.isoformat(),
+        arguments.train_test_split_time.isoformat(),
+        f"{train.num_rows:,}",
+        f"{eval_time.num_rows:,}",
+        f"{eval_event.num_rows:,}",
     }
-    assert analysis["split"]["train_resolved_date_range"] == _date_range(train)
-    assert analysis["split"]["time_eval_resolved_date_range"] == _date_range(eval_time)
-    assert analysis["split"]["event_eval_resolved_date_range"] == _date_range(eval_event)
+    for table in tables.values():
+        expected_report_values.update(_date_range(table).values())
+    assert all(value in report for value in expected_report_values)
+    assert "Split metrics (input tokens:" in report
+    assert "Questions/ID" in report
+    assert "Total tokens" not in report
+    assert "Positive ratio" in report
+    assert "Token lengths (" not in report
+    assert "P95 tokens" not in report
+    assert not (arguments.output_dir / f"forecastbench_analysis_cutoff_{tag}.json").exists()
 
     for stem in ("dist", "tokens"):
         plot = arguments.output_dir / f"forecastbench_{stem}_cutoff_{tag}.png"
