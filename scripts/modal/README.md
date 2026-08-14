@@ -14,7 +14,8 @@ The cached image contains the root trainers plus the explicitly selected `exampl
 tree uploaded at container startup, where it is mounted at `/root/slime/scripts` without rebuilding
 the image. `_app.py` owns local image and resource configuration; `_runtime.py` is imported remotely
 from that mounted tree with Modal's automatic source inclusion disabled. `command_modal.py` uses the
-same image and persistent Volume for one-off commands.
+same image and persistent Volume for one-off commands. ForecastBench preparation is intentionally
+excluded from the image because it runs locally before its finished artifacts are uploaded.
 
 ## Local environment
 
@@ -54,6 +55,20 @@ uv run --project scripts/modal modal run scripts/modal/command_modal.py -- bash 
 A nonzero command status fails the Modal invocation. Hugging Face, Torch, and XDG caches are placed
 under `/data/cache`. When invoking the Windows executables through Git Bash, first run
 `export MSYS2_ARG_CONV_EXCL="*"` so MSYS does not rewrite container paths such as `/data/models`.
+
+## Upload ForecastBench artifacts
+
+Prepare ForecastBench locally by following `forecast_data/README.md`. Modal is only the destination
+for the completed Parquet files, reports, and plot images. Upload one cutoff with:
+
+```bash
+uv run --project scripts/modal modal run scripts/modal/upload_forecastbench.py --cutoff 260801
+```
+
+The uploader validates all seven local artifacts before connecting, then overwrites that cutoff in
+`/forecast_data/outputs/` on the `code-maxrl-slime` Volume. It performs no remote preprocessing and
+requests no Modal compute. The ForecastBench training launchers use cutoff `260801` by default; set
+`FORECASTBENCH_CUTOFF=250801` (or another uploaded `YYMMDD` tag) to select a different split.
 
 ## Download and convert checkpoints
 

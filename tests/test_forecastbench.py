@@ -153,14 +153,18 @@ def test_scalar_eval_reports_brier_score_index_and_equivalent_mse():
     log_eval_metrics(
         0,
         SimpleNamespace(loss_type="regression_loss", sample_save_dir=None),
-        {"ForecastBench": {"samples": samples}},
+        {
+            "ForecastBenchTime": {"samples": samples},
+            "ForecastBenchEvent": {"samples": samples},
+        },
         log_dict,
     )
 
-    assert log_dict["eval-core/forecastbench/brier_score"] == pytest.approx(0.0625)
-    assert log_dict["eval-core/forecastbench/mse"] == pytest.approx(0.0625)
-    assert log_dict["eval-core/forecastbench/brier_index"] == pytest.approx(75.0)
-    assert log_dict["eval-core/forecastbench/prediction_coverage"] == 1.0
+    assert log_dict["eval-core/forecastbench_time/brier_score"] == pytest.approx(0.0625)
+    assert log_dict["eval-core/forecastbench_time/mse"] == pytest.approx(0.0625)
+    assert log_dict["eval-core/forecastbench_time/brier_index"] == pytest.approx(75.0)
+    assert log_dict["eval-core/forecastbench_time/prediction_coverage"] == 1.0
+    assert log_dict["eval-core/forecastbench_event/brier_score"] == pytest.approx(0.0625)
     assert brier_index(0.25) == pytest.approx(50.0)
 
 
@@ -184,10 +188,10 @@ def test_generated_eval_uses_worst_case_error_for_invalid_forecasts():
     log_eval_metrics(
         0,
         SimpleNamespace(loss_type="policy_loss", sample_save_dir=None),
-        {"ForecastBench": {"samples": samples}},
+        {"ForecastBenchEvent": {"samples": samples}},
         log_dict,
     )
 
-    assert log_dict["eval-core/forecastbench/prediction_coverage"] == pytest.approx(0.5)
-    assert log_dict["eval-core/forecastbench/brier_score"] == pytest.approx(0.52)
-    assert log_dict["eval-core/forecastbench/mse"] == pytest.approx(0.52)
+    assert log_dict["eval-core/forecastbench_event/prediction_coverage"] == pytest.approx(0.5)
+    assert log_dict["eval-core/forecastbench_event/brier_score"] == pytest.approx(0.52)
+    assert log_dict["eval-core/forecastbench_event/mse"] == pytest.approx(0.52)

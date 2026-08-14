@@ -1,9 +1,10 @@
 [project]
 name = "forecastbench-data"
 version = "0.1.0"
-description = "Filter, deduplicate, analyze, and split ForecastBench data"
+description = "Filter, decontaminate, analyze, and split ForecastBench data"
 requires-python = ">=3.10"
 dependencies = [
+    "matplotlib>=3.9,<4",
     "numpy>=1.26,<3",
     "pandas>=2.2,<3",
     "pyarrow>=17,<24",
@@ -37,4 +38,3 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

@@ -10,8 +10,10 @@ cd "${REPO_ROOT}"
 source scripts/models/qwen3-4B-Instruct-2507.sh
 
 RUN_NAME="qwen3-4B-Instruct-2507-forecastbench-grpo-bce-bs128-r16-steps100-reasoningfix"
-TRAIN_DATA="/data/forecast_data/outputs/forecastbench_binary_resolved_after_2025-08-01_train_90.parquet"
-EVAL_DATA="/data/forecast_data/outputs/forecastbench_binary_resolved_after_2025-08-01_test_10.parquet"
+FORECASTBENCH_CUTOFF="${FORECASTBENCH_CUTOFF:-260801}"
+TRAIN_DATA="/data/forecast_data/outputs/forecastbench_train_cutoff_${FORECASTBENCH_CUTOFF}.parquet"
+TIME_EVAL_DATA="/data/forecast_data/outputs/forecastbench_eval_time_cutoff_${FORECASTBENCH_CUTOFF}.parquet"
+EVENT_EVAL_DATA="/data/forecast_data/outputs/forecastbench_eval_event_cutoff_${FORECASTBENCH_CUTOFF}.parquet"
 MESSAGE_PROCESSOR='{"path":"slime_plugins.forecastbench.build_messages","kwargs":{"reasoning":true}}'
 
 CKPT_ARGS=(
@@ -54,7 +56,9 @@ GRPO_ARGS=(
 )
 
 EVAL_ARGS=(
-    --eval-prompt-data ForecastBench "${EVAL_DATA}"
+    --eval-prompt-data \
+        ForecastBenchTime "${TIME_EVAL_DATA}" \
+        ForecastBenchEvent "${EVENT_EVAL_DATA}"
     --eval-input-key question
     --eval-label-key resolved_value
     --eval-max-prompt-len 3072

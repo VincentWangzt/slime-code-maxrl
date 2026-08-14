@@ -18,6 +18,10 @@ from slime.utils.regression import REGRESSION_MODEL_PREDICTION_KEY
 from slime.utils.types import Sample
 
 _OBSERVATION_METADATA_KEY = "forecastbench"
+_EVAL_DATASET_SPLITS = (
+    ("ForecastBenchTime", "time"),
+    ("ForecastBenchEvent", "event"),
+)
 _PROBABILITY_EPSILON = 1e-6
 _NUMBER_PATTERN = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 _PLAIN_PROBABILITY_RE = re.compile(rf"^\s*({_NUMBER_PATTERN})\s*$")
@@ -363,23 +367,38 @@ def log_eval_metrics(
     data: dict[str, dict[str, Any]],
     log_dict: dict[str, Any],
 ) -> bool:
-    """Report ForecastBench Brier score, Brier Index, and equivalent MSE."""
-    dataset = data.get("ForecastBench")
-    if not isinstance(dataset, dict):
-        raise ValueError("ForecastBench eval hook requires a dataset named 'ForecastBench'.")
-    samples = dataset.get("samples")
-    if not isinstance(samples, list) or not samples:
-        raise ValueError("ForecastBench evaluation requires a non-empty sample list.")
-
+    """Report separate time- and event-constrained ForecastBench metrics."""
     direct_scalar = getattr(args, "loss_type", None) == "regression_loss"
-    groups = _group_eval_observations(samples, direct_scalar=direct_scalar)
-    _add_brier_metrics(log_dict, "eval-core/forecastbench", groups)
+    prediction_rows: list[dict[str, Any]] = []
+    evaluated_splits = 0
+    for dataset_name, split_name in _EVAL_DATASET_SPLITS:
+        dataset = data.get(dataset_name)
+        if dataset is None:
+            continue
+        if not isinstance(dataset, dict):
+            raise ValueError(f"ForecastBench evaluation dataset {dataset_name!r} must be a mapping.")
+        samples = dataset.get("samples")
+        if not isinstance(samples, list) or not samples:
+            raise ValueError(f"ForecastBench evaluation dataset {dataset_name!r} requires non-empty samples.")
 
-    by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for group in groups:
-        by_source[group["source"]].append(group)
-    for source, source_groups in sorted(by_source.items()):
-        _add_brier_metrics(log_dict, f"eval-aux/forecastbench_source/{source}", source_groups)
+        groups = _group_eval_observations(samples, direct_scalar=direct_scalar)
+        _add_brier_metrics(log_dict, f"eval-core/forecastbench_{split_name}", groups)
 
-    _write_eval_predictions(args, rollout_id, groups)
+        by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for group in groups:
+            by_source[group["source"]].append(group)
+            prediction_rows.append({**group, "eval_split": split_name})
+        for source, source_groups in sorted(by_source.items()):
+            _add_brier_metrics(
+                log_dict,
+                f"eval-aux/forecastbench_{split_name}_source/{source}",
+                source_groups,
+            )
+        evaluated_splits += 1
+
+    if evaluated_splits == 0:
+        names = ", ".join(name for name, _ in _EVAL_DATASET_SPLITS)
+        raise ValueError(f"ForecastBench eval hook requires at least one of these datasets: {names}.")
+
+    _write_eval_predictions(args, rollout_id, prediction_rows)
     return False

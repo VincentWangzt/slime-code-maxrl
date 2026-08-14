@@ -22,21 +22,6 @@ _RUNTIME_SCRIPTS_IGNORE = (
     "**/.ruff_cache/**",
 )
 
-_FORECAST_DATA_IGNORE = (
-    ".venv",
-    ".venv/**",
-    ".venv*",
-    "**/.venv/**",
-    "**/__pycache__/**",
-    "**/.pytest_cache/**",
-    "**/.ruff_cache/**",
-    "raw",
-    "raw/**",
-    "outputs",
-    "outputs/**",
-)
-
-
 DOTENV_SECRET = modal.Secret.from_dotenv(REPO_ROOT)
 VOLUME = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
@@ -133,12 +118,6 @@ RUNTIME_IMAGE = (
         remote_path=f"{REMOTE_REPO_ROOT}/scripts",
         copy=False,
         ignore=_RUNTIME_SCRIPTS_IGNORE,
-    )
-    .add_local_dir(
-        REPO_ROOT / "forecast_data",
-        remote_path=f"{REMOTE_REPO_ROOT}/forecast_data",
-        copy=False,
-        ignore=_FORECAST_DATA_IGNORE,
     )
 )
 

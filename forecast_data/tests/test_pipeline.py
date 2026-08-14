@@ -4,15 +4,19 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 import pyarrow.parquet as pq
 
 from forecastbench_data.pipeline import (
     OUTPUT_COLUMNS,
     add_token_lengths,
-    build_filtered_dataset,
-    grouped_stratified_train_test_split,
+    build_dataset,
+    find_default_cutoff,
+    output_paths,
+    split_dataset,
     write_parquet_dataset,
 )
+from forecastbench_data.reporting import write_analysis_plots
 
 
 class WhitespaceTokenizer:
@@ -73,16 +77,15 @@ def test_filter_expand_deduplicate_tokenize_and_write(tmp_path: Path) -> None:
         ],
     )
 
-    build = build_filtered_dataset(raw, date(2024, 1, 15))
+    build = build_dataset(raw)
 
-    assert len(build.frame) == 3
+    assert len(build.frame) == 4
     assert build.counters["duplicate_candidate_rows_excluded"] == 1
     assert build.counters["unresolved_records_excluded"] == 1
     assert build.counters["nonbinary_resolved_records_excluded"] == 1
     market = build.frame.loc[build.frame["id"] == "market-1"].iloc[0]
     assert market["freeze_value"] == "0.2"
-    assert build.counters["resolution_records_on_or_before_cutoff_excluded"] == 1
-    assert min(build.frame["resolved_date"]) > date(2024, 1, 15)
+    assert min(build.frame["resolved_date"]) == date(2024, 1, 10)
     assert "2024-02-01" in "".join(build.frame["question"])
     assert "{resolution_date}" not in "".join(build.frame["question"])
 
@@ -97,23 +100,62 @@ def test_filter_expand_deduplicate_tokenize_and_write(tmp_path: Path) -> None:
     assert str(table.schema.field("resolved_date").type) == "date32[day]"
     assert str(table.schema.field("freeze_value").type) == "string"
 
+    distribution_plot = tmp_path / "distributions.png"
+    token_plot = tmp_path / "tokens.png"
+    write_analysis_plots(
+        tokenized,
+        cutoff_date=date(2024, 1, 15),
+        distribution_path=distribution_plot,
+        token_path=token_plot,
+        bin_count=3,
+    )
+    assert distribution_plot.read_bytes().startswith(b"\x89PNG")
+    assert token_plot.read_bytes().startswith(b"\x89PNG")
 
-def test_split_is_grouped_deterministic_shuffled_and_disjoint() -> None:
+
+def test_default_cutoff_uses_latest_date_with_more_than_minimum_later_rows() -> None:
+    frame = pd.DataFrame(
+        {
+            "resolved_date": (
+                [date(2024, 1, 1)] * 2
+                + [date(2024, 1, 2)] * 3
+                + [date(2024, 1, 3)] * 4
+                + [date(2024, 1, 4)] * 2
+            )
+        }
+    )
+
+    assert find_default_cutoff(frame, minimum_eval_size=5) == date(2024, 1, 2)
+
+
+def test_split_is_deterministic_time_held_out_event_held_out_and_train_decontaminated() -> None:
     frame = _split_frame()
-    first_train, first_test = grouped_stratified_train_test_split(frame, test_fraction=0.1, seed=7)
-    second_train, second_test = grouped_stratified_train_test_split(frame, test_fraction=0.1, seed=7)
+    first = split_dataset(frame, cutoff_date=date(2024, 1, 2), event_eval_size=5, seed=7)
+    second = split_dataset(frame, cutoff_date=date(2024, 1, 2), event_eval_size=5, seed=7)
 
-    assert len(first_train) == 36
-    assert len(first_test) == 4
-    assert first_train["row_number"].tolist() == second_train["row_number"].tolist()
-    assert first_test["row_number"].tolist() == second_test["row_number"].tolist()
-    assert first_train["row_number"].tolist() != sorted(first_train["row_number"])
-    assert first_test["row_number"].tolist() != sorted(first_test["row_number"])
-    train_families = set(zip(first_train["source"], first_train["id"], strict=True))
-    test_families = set(zip(first_test["source"], first_test["id"], strict=True))
-    assert train_families.isdisjoint(test_families)
-    assert set(first_train["resolved_value"]) == {0, 1}
-    assert set(first_test["resolved_value"]) == {0, 1}
+    assert first.cutoff_date == date(2024, 1, 2)
+    assert first.cutoff_is_automatic is False
+    assert len(first.train) == 8
+    assert len(first.eval_event) == 4
+    assert len(first.eval_time) == 4
+    assert first.train["row_number"].tolist() == second.train["row_number"].tolist()
+    assert first.eval_event["row_number"].tolist() == second.eval_event["row_number"].tolist()
+    assert first.eval_time["row_number"].tolist() == second.eval_time["row_number"].tolist()
+    assert first.train[["source", "id"]].duplicated().sum() == 4
+    train_families = set(zip(first.train["source"], first.train["id"], strict=True))
+    event_families = set(zip(first.eval_event["source"], first.eval_event["id"], strict=True))
+    assert train_families.isdisjoint(event_families)
+    assert (first.train["resolved_date"] <= date(2024, 1, 2)).all()
+    assert (first.eval_event["resolved_date"] <= date(2024, 1, 2)).all()
+    assert (first.eval_time["resolved_date"] > date(2024, 1, 2)).all()
+
+
+def test_output_paths_are_terse_and_use_two_digit_cutoff_year(tmp_path: Path) -> None:
+    paths = output_paths(tmp_path, date(2025, 8, 1))
+
+    assert paths.train.name == "forecastbench_train_cutoff_250801.parquet"
+    assert paths.eval_time.name == "forecastbench_eval_time_cutoff_250801.parquet"
+    assert paths.eval_event.name == "forecastbench_eval_event_cutoff_250801.parquet"
 
 
 def _write_round(raw: Path, round_date: str, questions: list[dict[str, object]], resolutions: list[dict[str, object]]) -> None:
@@ -169,19 +211,27 @@ def _resolution(question_id: object, source: str, resolved_date: str, value: flo
     }
 
 
-def _split_frame():
-    import pandas as pd
-
+def _split_frame() -> pd.DataFrame:
     rows = []
-    for source in ("a", "b"):
-        for family in range(10):
-            for resolved_value in (0, 1):
-                rows.append(
-                    {
-                        "id": f"question-{family}",
-                        "source": source,
-                        "resolved_value": resolved_value,
-                        "row_number": len(rows),
-                    }
-                )
+    for family in range(6):
+        for day in (1, 2):
+            rows.append(
+                {
+                    "id": f"question-{family}",
+                    "source": "source",
+                    "resolved_value": (family + day) % 2,
+                    "resolved_date": date(2024, 1, day),
+                    "row_number": len(rows),
+                }
+            )
+    for family in range(4):
+        rows.append(
+            {
+                "id": f"question-{family}",
+                "source": "source",
+                "resolved_value": family % 2,
+                "resolved_date": date(2024, 1, 3),
+                "row_number": len(rows),
+            }
+        )
     return pd.DataFrame(rows)

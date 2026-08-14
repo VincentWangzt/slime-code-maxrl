@@ -17,6 +17,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 QUESTION_SET_PATTERN = re.compile(r"^(?P<round_date>\d{4}-\d{2}-\d{2})-llm\.json$")
+FAMILY_COLUMNS = ("source", "id")
 OUTPUT_COLUMNS = (
     "id",
     "source",
@@ -55,17 +56,39 @@ class BuildResult:
 
 
 @dataclass(frozen=True)
+class DatasetSplit:
+    cutoff_date: date
+    cutoff_is_automatic: bool
+    train: pd.DataFrame
+    eval_time: pd.DataFrame
+    eval_event: pd.DataFrame
+
+
+@dataclass(frozen=True)
 class OutputPaths:
-    full: Path
     train: Path
-    test: Path
+    eval_time: Path
+    eval_event: Path
     analysis_json: Path
     analysis_text: Path
+    distribution_plot: Path
+    token_plot: Path
+
+    def all(self) -> tuple[Path, ...]:
+        return (
+            self.train,
+            self.eval_time,
+            self.eval_event,
+            self.analysis_json,
+            self.analysis_text,
+            self.distribution_plot,
+            self.token_plot,
+        )
 
 
-def build_filtered_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep: str = "earliest") -> BuildResult:
-    if dedupe_keep not in {"earliest", "latest"}:
-        raise ValueError(f"dedupe_keep must be 'earliest' or 'latest', got {dedupe_keep!r}")
+def build_dataset(raw_repository: Path, dedupe_keep: str = "earliest") -> BuildResult:
+    """Read all resolved binary ForecastBench question instances."""
+    _validate_dedupe_keep(dedupe_keep)
 
     datasets_directory = raw_repository / "datasets"
     question_directory = datasets_directory / "question_sets"
@@ -131,21 +154,16 @@ def build_filtered_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep:
                 resolution.get("resolution_date"),
                 f"{resolution_file}:resolution_date",
             )
-            if resolved_date <= cutoff_date:
-                counters["resolution_records_on_or_before_cutoff_excluded"] += 1
-                continue
-            counters["resolution_records_after_cutoff"] += 1
-
             if resolution.get("resolved") is not True:
                 counters["unresolved_records_excluded"] += 1
                 continue
-            counters["resolved_records_after_cutoff"] += 1
+            counters["resolved_records"] += 1
 
             resolved_value = _binary_value(resolution.get("resolved_to"))
             if resolved_value is None:
                 counters["nonbinary_resolved_records_excluded"] += 1
                 continue
-            counters["binary_resolved_records_after_cutoff"] += 1
+            counters["binary_resolved_records"] += 1
 
             resolution_id = resolution.get("id")
             direction = resolution.get("direction")
@@ -175,16 +193,11 @@ def build_filtered_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep:
 
     counters["joined_candidate_rows"] = len(candidates)
     if not candidates:
-        raise ValueError(f"No resolved binary rows occur after cutoff date {cutoff_date.isoformat()}")
+        raise ValueError("No resolved binary ForecastBench rows were found")
 
     frame = pd.DataFrame.from_records(candidates)
     _validate_candidate_consistency(frame)
-    frame = frame.sort_values(
-        ["_freeze_datetime", "_forecast_due_date", "_question_set", "resolved_date", "source", "id"],
-        kind="stable",
-    )
-    keep = "first" if dedupe_keep == "earliest" else "last"
-    frame = frame.drop_duplicates(subset=["_instance_key"], keep=keep)
+    frame = _deduplicate(frame, ("_instance_key",), dedupe_keep)
     counters["duplicate_candidate_rows_excluded"] = len(candidates) - len(frame)
     counters["retained_rows"] = len(frame)
 
@@ -209,95 +222,78 @@ def add_token_lengths(frame: pd.DataFrame, tokenizer: Any, batch_size: int = 256
     return result
 
 
-def grouped_stratified_train_test_split(
-    frame: pd.DataFrame,
-    test_fraction: float = 0.1,
-    seed: int = 42,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if not 0.0 < test_fraction < 1.0:
-        raise ValueError(f"test_fraction must be between zero and one, got {test_fraction}")
-    if len(frame) < 2:
-        raise ValueError("At least two rows are required for a train/test split")
-    required_columns = {"source", "id", "resolved_value"}
-    missing_columns = required_columns.difference(frame.columns)
-    if missing_columns:
-        raise ValueError(f"Missing columns required for grouped splitting: {sorted(missing_columns)}")
-    if not frame["resolved_value"].isin([0, 1]).all():
-        raise ValueError("grouped_stratified_train_test_split requires binary resolved_value rows")
+def find_default_cutoff(frame: pd.DataFrame, minimum_eval_size: int = 500) -> date:
+    """Return the latest observed date with more than ``minimum_eval_size`` later rows."""
+    if minimum_eval_size <= 0:
+        raise ValueError(f"minimum_eval_size must be positive, got {minimum_eval_size}")
+    _require_columns(frame, {"resolved_date"})
 
-    group_statistics = (
-        frame.groupby(["source", "id"], sort=True, as_index=False)["resolved_value"]
-        .agg(rows="size", positives="sum")
-        .assign(negatives=lambda table: table["rows"] - table["positives"])
-    )
-    if len(group_statistics) < 2:
-        raise ValueError("At least two distinct (source, id) question families are required for a split")
+    counts = frame.groupby("resolved_date", sort=True).size()
+    remaining_after_date = counts.iloc[::-1].cumsum().iloc[::-1] - counts
+    candidates = remaining_after_date[remaining_after_date > minimum_eval_size]
+    if candidates.empty:
+        raise ValueError(
+            f"No resolution date leaves more than {minimum_eval_size} later questions; "
+            f"the dataset has {len(frame)} rows"
+        )
+    cutoff = candidates.index.max()
+    return cutoff.date() if isinstance(cutoff, pd.Timestamp) else cutoff
+
+
+def split_dataset(
+    frame: pd.DataFrame,
+    *,
+    cutoff_date: date | None = None,
+    minimum_time_eval_size: int = 500,
+    event_eval_size: int = 500,
+    seed: int = 42,
+) -> DatasetSplit:
+    """Create time-held-out, event-held-out, and event-decontaminated training sets."""
+    if minimum_time_eval_size <= 0:
+        raise ValueError(f"minimum_time_eval_size must be positive, got {minimum_time_eval_size}")
+    if event_eval_size <= 0:
+        raise ValueError(f"event_eval_size must be positive, got {event_eval_size}")
+    _require_columns(frame, {*FAMILY_COLUMNS, "resolved_date", "resolved_value"})
+    if not frame["resolved_value"].isin([0, 1]).all():
+        raise ValueError("split_dataset requires binary resolved_value rows")
+
+    cutoff_is_automatic = cutoff_date is None
+    selected_cutoff = cutoff_date or find_default_cutoff(frame, minimum_time_eval_size)
+    eval_time = frame.loc[frame["resolved_date"] > selected_cutoff].copy()
+    historical = frame.loc[frame["resolved_date"] <= selected_cutoff].copy()
+    if eval_time.empty:
+        raise ValueError(f"No questions resolve after cutoff date {selected_cutoff.isoformat()}")
+
+    family_sizes = historical.groupby(list(FAMILY_COLUMNS), sort=True).size().reset_index(name="rows")
+    if len(family_sizes) < 2:
+        raise ValueError("At least two historical event families are required for event evaluation and training")
 
     rng = np.random.default_rng(seed)
-    test_groups: set[tuple[str, str]] = set()
-    for _, source_groups in group_statistics.groupby("source", sort=True):
-        selected_positions = _select_test_groups_for_source(source_groups, test_fraction, rng)
-        for position in selected_positions:
-            row = source_groups.iloc[position]
-            test_groups.add((str(row["source"]), str(row["id"])))
+    selected_families = _select_event_families(family_sizes, event_eval_size, rng)
+    event_mask = _family_mask(historical, selected_families)
+    eval_event = historical.loc[event_mask].copy()
+    train = historical.loc[~event_mask].copy()
 
-    if not test_groups:
-        smallest = group_statistics.sort_values(["rows", "source", "id"], kind="stable").iloc[0]
-        test_groups.add((str(smallest["source"]), str(smallest["id"])))
-    if len(test_groups) == len(group_statistics):
-        largest = group_statistics.sort_values(["rows", "source", "id"], kind="stable").iloc[-1]
-        test_groups.remove((str(largest["source"]), str(largest["id"])))
-
-    family_keys = list(zip(frame["source"], frame["id"], strict=True))
-    test_indices = [index for index, family in zip(frame.index, family_keys, strict=True) if family in test_groups]
-    test_index_set = set(test_indices)
-    train_indices = [index for index in frame.index if index not in test_index_set]
-    train_indices = rng.permutation(np.asarray(train_indices, dtype=np.int64)).tolist()
-    test_indices = rng.permutation(np.asarray(test_indices, dtype=np.int64)).tolist()
-    train = frame.loc[train_indices].reset_index(drop=True)
-    test = frame.loc[test_indices].reset_index(drop=True)
-    return train, test
+    return DatasetSplit(
+        cutoff_date=selected_cutoff,
+        cutoff_is_automatic=cutoff_is_automatic,
+        train=_shuffle(train, rng),
+        eval_time=_shuffle(eval_time, rng),
+        eval_event=_shuffle(eval_event, rng),
+    )
 
 
-def _select_test_groups_for_source(
-    groups: pd.DataFrame,
-    test_fraction: float,
-    rng: np.random.Generator,
-    search_trials: int = 512,
-) -> list[int]:
-    features = groups.loc[:, ["rows", "negatives", "positives"]].to_numpy(dtype=np.int64)
-    targets = features.sum(axis=0, dtype=np.int64) * test_fraction
-    label_denominators = np.maximum(targets[1:], 1.0)
-    best_score = (math.inf, math.inf)
-    best_positions: list[int] = []
-
-    for _ in range(search_trials):
-        permutation = rng.permutation(len(groups))
-        cumulative = np.vstack([np.zeros(3, dtype=np.int64), np.cumsum(features[permutation], axis=0)])
-        row_errors = np.abs(cumulative[:, 0] - targets[0])
-        minimum_row_error = row_errors.min()
-        candidate_sizes = np.flatnonzero(np.isclose(row_errors, minimum_row_error))
-        for candidate_size in candidate_sizes:
-            label_error = float(np.square((cumulative[candidate_size, 1:] - targets[1:]) / label_denominators).sum())
-            score = (float(row_errors[candidate_size]), label_error)
-            if score < best_score:
-                best_score = score
-                best_positions = permutation[:candidate_size].tolist()
-
-    return best_positions
-
-
-def output_paths(output_directory: Path, cutoff_date: date, test_fraction: float) -> OutputPaths:
-    cutoff = cutoff_date.isoformat()
-    train_percent = int(round((1.0 - test_fraction) * 100))
-    test_percent = int(round(test_fraction * 100))
-    stem = f"forecastbench_binary_resolved_after_{cutoff}"
+def output_paths(output_directory: Path, cutoff_date: date) -> OutputPaths:
+    cutoff = cutoff_date.strftime("%y%m%d")
+    suffix = f"cutoff_{cutoff}"
     return OutputPaths(
-        full=output_directory / f"{stem}.parquet",
-        train=output_directory / f"{stem}_train_{train_percent}.parquet",
-        test=output_directory / f"{stem}_test_{test_percent}.parquet",
-        analysis_json=output_directory / f"{stem}_analysis.json",
-        analysis_text=output_directory / f"{stem}_analysis.txt",
+        train=output_directory / f"forecastbench_train_{suffix}.parquet",
+        eval_time=output_directory / f"forecastbench_eval_time_{suffix}.parquet",
+        eval_event=output_directory / f"forecastbench_eval_event_{suffix}.parquet",
+        analysis_json=output_directory / f"forecastbench_analysis_{suffix}.json",
+        analysis_text=output_directory / f"forecastbench_analysis_{suffix}.txt",
+        distribution_plot=output_directory / f"forecastbench_dist_{suffix}.png",
+        token_plot=output_directory / f"forecastbench_tokens_{suffix}.png",
     )
 
 
@@ -316,6 +312,55 @@ def write_parquet_dataset(frame: pd.DataFrame, path: Path, metadata: dict[str, s
         os.replace(temporary_path, path)
     finally:
         temporary_path.unlink(missing_ok=True)
+
+
+def _select_event_families(
+    family_sizes: pd.DataFrame,
+    target_rows: int,
+    rng: np.random.Generator,
+) -> set[tuple[str, str]]:
+    permutation = rng.permutation(len(family_sizes))
+    shuffled_sizes = family_sizes.iloc[permutation]["rows"].to_numpy(dtype=np.int64)
+    cumulative_rows = np.cumsum(shuffled_sizes)
+
+    # Keep at least one family for training. The closest random prefix makes the
+    # row target approximate without ever splitting an event family.
+    eligible_totals = cumulative_rows[:-1]
+    selected_count = int(np.abs(eligible_totals - target_rows).argmin()) + 1
+    selected_rows = family_sizes.iloc[permutation[:selected_count]]
+    return set(zip(selected_rows["source"], selected_rows["id"], strict=True))
+
+
+def _family_mask(frame: pd.DataFrame, families: set[tuple[str, str]]) -> pd.Series:
+    keys = zip(frame["source"], frame["id"], strict=True)
+    return pd.Series((key in families for key in keys), index=frame.index, dtype=bool)
+
+
+def _deduplicate(frame: pd.DataFrame, columns: tuple[str, ...], dedupe_keep: str) -> pd.DataFrame:
+    sort_columns = [
+        column
+        for column in ("_freeze_datetime", "_forecast_due_date", "_question_set", "resolved_date", "source", "id")
+        if column in frame.columns
+    ]
+    ordered = frame.sort_values(sort_columns, kind="stable") if sort_columns else frame
+    keep = "first" if dedupe_keep == "earliest" else "last"
+    return ordered.drop_duplicates(subset=list(columns), keep=keep).reset_index(drop=True)
+
+
+def _shuffle(frame: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
+    positions = rng.permutation(len(frame))
+    return frame.iloc[positions].reset_index(drop=True)
+
+
+def _require_columns(frame: pd.DataFrame, required: set[str]) -> None:
+    missing = required.difference(frame.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(missing)}")
+
+
+def _validate_dedupe_keep(dedupe_keep: str) -> None:
+    if dedupe_keep not in {"earliest", "latest"}:
+        raise ValueError(f"dedupe_keep must be 'earliest' or 'latest', got {dedupe_keep!r}")
 
 
 def _candidate_row(
