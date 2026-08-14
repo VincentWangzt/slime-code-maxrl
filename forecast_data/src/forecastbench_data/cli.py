@@ -27,6 +27,7 @@ PROJECT_DIRECTORY = Path(__file__).resolve().parents[2]
 DEFAULT_RAW_DIRECTORY = PROJECT_DIRECTORY / "raw" / "forecastbench-datasets"
 DEFAULT_OUTPUT_DIRECTORY = PROJECT_DIRECTORY / "outputs"
 DEFAULT_TOKENIZER = "Qwen/Qwen3-0.6B"
+DEFAULT_SOURCE_REVISION = "b3107271ac345f5b879300868dd9f09fc8566dc8"
 DEFAULT_CUTOFF_DATE = date(2025, 8, 1)
 DEFAULT_EVAL_SIZE = 500
 DEFAULT_PLOT_BINS = 20
@@ -36,16 +37,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Prepare resolved binary ForecastBench data.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    download_parser = subparsers.add_parser("download", help="Download an ignored raw dataset snapshot.")
+    download_parser = subparsers.add_parser("download", help="Download the ForecastBench source snapshot.")
     download_parser.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW_DIRECTORY)
-    download_parser.add_argument("--revision", default="main", help="Git branch, tag, or commit to fetch.")
+    download_parser.add_argument(
+        "--revision",
+        default=DEFAULT_SOURCE_REVISION,
+        help=f"Git revision to fetch (default: {DEFAULT_SOURCE_REVISION}).",
+    )
     download_parser.add_argument(
         "--refresh",
         action="store_true",
-        help="Explicitly fetch and check out the requested revision when the raw directory already exists.",
+        help="Fetch the selected revision when the raw directory already exists.",
     )
 
-    process_parser = subparsers.add_parser("process", help="Prepare, analyze, split, and write Parquet data.")
+    process_parser = subparsers.add_parser("process", help="Prepare the datasets and analysis artifacts.")
     process_parser.add_argument(
         "--cutoff-date",
         type=_iso_date,
@@ -56,8 +61,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--train-test-split-time",
         type=_iso_date,
         help=(
-            "Last training resolution date in YYYY-MM-DD. By default, use the latest observed date with more "
-            "than --minimum-time-eval-size later questions."
+            "Last resolution date included in train and eval_event. By default, use the latest date with more "
+            "than --minimum-time-eval-size later rows."
         ),
     )
     process_parser.add_argument("--raw-dir", type=Path, default=DEFAULT_RAW_DIRECTORY)
@@ -68,7 +73,6 @@ def build_parser() -> argparse.ArgumentParser:
     process_parser.add_argument("--event-eval-size", type=int, default=DEFAULT_EVAL_SIZE)
     process_parser.add_argument("--plot-bins", type=int, default=DEFAULT_PLOT_BINS)
     process_parser.add_argument("--seed", type=int, default=42)
-    process_parser.add_argument("--dedupe-keep", choices=("earliest", "latest"), default="earliest")
     return parser
 
 
@@ -87,10 +91,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     ):
         raise ValueError("--train-test-split-time must be later than --cutoff-date")
 
-    build = build_dataset(arguments.raw_dir, arguments.cutoff_date, arguments.dedupe_keep)
+    frame = build_dataset(arguments.raw_dir, arguments.cutoff_date)
     console.print(f"Loading tokenizer {arguments.tokenizer} ...")
     tokenizer = AutoTokenizer.from_pretrained(arguments.tokenizer, use_fast=True, trust_remote_code=False)
-    frame = add_token_lengths(build.frame, tokenizer, arguments.tokenizer_batch_size)
+    frame = add_token_lengths(frame, tokenizer, arguments.tokenizer_batch_size)
     split = split_dataset(
         frame,
         train_test_split_time=arguments.train_test_split_time,

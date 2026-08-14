@@ -8,6 +8,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 from rich.console import Console
 
+from forecastbench_data.cli import DEFAULT_CUTOFF_DATE, DEFAULT_SOURCE_REVISION, build_parser
 from forecastbench_data.pipeline import (
     OUTPUT_COLUMNS,
     add_token_lengths,
@@ -30,7 +31,16 @@ class WhitespaceTokenizer:
         return {"input_ids": [list(range(len(text.split()))) for text in texts]}
 
 
-def test_filter_expand_deduplicate_tokenize_and_write(tmp_path: Path) -> None:
+def test_cli_defaults_match_the_pinned_snapshot() -> None:
+    download_arguments = build_parser().parse_args(["download"])
+    process_arguments = build_parser().parse_args(["process"])
+
+    assert download_arguments.revision == DEFAULT_SOURCE_REVISION
+    assert process_arguments.cutoff_date == DEFAULT_CUTOFF_DATE
+    assert process_arguments.train_test_split_time is None
+
+
+def test_filter_expand_keep_earliest_tokenize_and_write(tmp_path: Path) -> None:
     raw = tmp_path / "forecastbench-datasets"
     _write_round(
         raw,
@@ -83,20 +93,17 @@ def test_filter_expand_deduplicate_tokenize_and_write(tmp_path: Path) -> None:
         ],
     )
 
-    build = build_dataset(raw, date(2024, 1, 15))
+    frame = build_dataset(raw, date(2024, 1, 15))
 
-    assert len(build.frame) == 3
-    assert build.counters["duplicate_candidate_rows_excluded"] == 1
-    assert build.counters["unresolved_records_excluded"] == 1
-    assert build.counters["nonbinary_resolved_records_excluded"] == 1
-    market = build.frame.loc[build.frame["id"] == "market-1"].iloc[0]
+    assert len(frame) == 3
+    assert set(frame["id"]) == {"market-1", "series-1"}
+    market = frame.loc[frame["id"] == "market-1"].iloc[0]
     assert market["freeze_value"] == "0.2"
-    assert build.counters["resolution_records_on_or_before_cutoff_excluded"] == 1
-    assert min(build.frame["resolved_date"]) > date(2024, 1, 15)
-    assert "2024-02-01" in "".join(build.frame["question"])
-    assert "{resolution_date}" not in "".join(build.frame["question"])
+    assert min(frame["resolved_date"]) > date(2024, 1, 15)
+    assert "2024-02-01" in "".join(frame["question"])
+    assert "{resolution_date}" not in "".join(frame["question"])
 
-    tokenized = add_token_lengths(build.frame, WhitespaceTokenizer(), batch_size=2)
+    tokenized = add_token_lengths(frame, WhitespaceTokenizer(), batch_size=2)
     assert (tokenized["input_tokens"] >= tokenized["question_tokens"]).all()
 
     output = tmp_path / "dataset.parquet"

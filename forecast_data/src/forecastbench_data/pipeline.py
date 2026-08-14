@@ -5,7 +5,6 @@ import math
 import os
 import re
 import tempfile
-from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -49,13 +48,6 @@ PARQUET_SCHEMA = pa.schema(
 
 
 @dataclass(frozen=True)
-class BuildResult:
-    frame: pd.DataFrame
-    counters: dict[str, int]
-    question_sets: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class DatasetSplit:
     train_test_split_time: date
     split_time_is_automatic: bool
@@ -84,10 +76,8 @@ class OutputPaths:
         )
 
 
-def build_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep: str = "earliest") -> BuildResult:
+def build_dataset(raw_repository: Path, cutoff_date: date) -> pd.DataFrame:
     """Read resolved binary question instances strictly after the starting cutoff."""
-    _validate_dedupe_keep(dedupe_keep)
-
     datasets_directory = raw_repository / "datasets"
     question_directory = datasets_directory / "question_sets"
     resolution_directory = datasets_directory / "resolution_sets"
@@ -102,9 +92,7 @@ def build_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep: str = "e
     if not question_files:
         raise FileNotFoundError(f"No dated *-llm.json question sets found under {question_directory}")
 
-    counters: Counter[str] = Counter()
     candidates: list[dict[str, Any]] = []
-    processed_sets: list[str] = []
 
     for question_file in question_files:
         match = QUESTION_SET_PATTERN.fullmatch(question_file.name)
@@ -128,17 +116,12 @@ def build_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep: str = "e
 
         questions = _required_list(question_payload, "questions", question_file)
         resolutions = _required_list(resolution_payload, "resolutions", resolution_file)
-        counters["question_sets"] += 1
-        counters["question_records"] += len(questions)
-        counters["resolution_records"] += len(resolutions)
-        processed_sets.append(question_file.name)
 
         question_lookup: dict[tuple[str, str], dict[str, Any]] = {}
         for question in questions:
             question_id = question.get("id")
             source = question.get("source")
             if not isinstance(question_id, str):
-                counters["composite_question_records_excluded"] += 1
                 continue
             if not isinstance(source, str) or not source:
                 raise ValueError(f"Question in {question_file} has invalid source: {source!r}")
@@ -153,25 +136,18 @@ def build_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep: str = "e
                 f"{resolution_file}:resolution_date",
             )
             if resolved_date <= cutoff_date:
-                counters["resolution_records_on_or_before_cutoff_excluded"] += 1
                 continue
-            counters["resolution_records_after_cutoff"] += 1
 
             if resolution.get("resolved") is not True:
-                counters["unresolved_records_excluded"] += 1
                 continue
-            counters["resolved_records_after_cutoff"] += 1
 
             resolved_value = _binary_value(resolution.get("resolved_to"))
             if resolved_value is None:
-                counters["nonbinary_resolved_records_excluded"] += 1
                 continue
-            counters["binary_resolved_records_after_cutoff"] += 1
 
             resolution_id = resolution.get("id")
             direction = resolution.get("direction")
             if not isinstance(resolution_id, str) or direction is not None:
-                counters["composite_resolution_records_excluded"] += 1
                 continue
 
             source = resolution.get("source")
@@ -179,7 +155,6 @@ def build_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep: str = "e
                 raise ValueError(f"Resolution in {resolution_file} has invalid source: {source!r}")
             question = question_lookup.get((source, resolution_id))
             if question is None:
-                counters["binary_resolution_records_without_question_excluded"] += 1
                 continue
 
             candidates.append(
@@ -194,19 +169,16 @@ def build_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep: str = "e
                 )
             )
 
-    counters["joined_candidate_rows"] = len(candidates)
     if not candidates:
         raise ValueError(f"No resolved binary ForecastBench rows occur after cutoff {cutoff_date.isoformat()}")
 
     frame = pd.DataFrame.from_records(candidates)
     _validate_candidate_consistency(frame)
-    frame = _deduplicate(frame, ("_instance_key",), dedupe_keep)
-    counters["duplicate_candidate_rows_excluded"] = len(candidates) - len(frame)
-    counters["retained_rows"] = len(frame)
+    frame = _keep_earliest_instances(frame)
 
     frame = frame.sort_values(["resolved_date", "source", "id"], kind="stable").reset_index(drop=True)
     frame["resolved_value"] = frame["resolved_value"].astype("int8")
-    return BuildResult(frame=frame, counters=dict(counters), question_sets=tuple(processed_sets))
+    return frame
 
 
 def add_token_lengths(frame: pd.DataFrame, tokenizer: Any, batch_size: int = 256) -> pd.DataFrame:
@@ -342,15 +314,10 @@ def _family_mask(frame: pd.DataFrame, families: set[tuple[str, str]]) -> pd.Seri
     return pd.Series((key in families for key in keys), index=frame.index, dtype=bool)
 
 
-def _deduplicate(frame: pd.DataFrame, columns: tuple[str, ...], dedupe_keep: str) -> pd.DataFrame:
-    sort_columns = [
-        column
-        for column in ("_freeze_datetime", "_forecast_due_date", "_question_set", "resolved_date", "source", "id")
-        if column in frame.columns
-    ]
-    ordered = frame.sort_values(sort_columns, kind="stable") if sort_columns else frame
-    keep = "first" if dedupe_keep == "earliest" else "last"
-    return ordered.drop_duplicates(subset=list(columns), keep=keep).reset_index(drop=True)
+def _keep_earliest_instances(frame: pd.DataFrame) -> pd.DataFrame:
+    sort_columns = ("_freeze_datetime", "_forecast_due_date", "_question_set", "resolved_date", "source", "id")
+    ordered = frame.sort_values(list(sort_columns), kind="stable")
+    return ordered.drop_duplicates(subset="_instance_key", keep="first").reset_index(drop=True)
 
 
 def _shuffle(frame: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
@@ -362,11 +329,6 @@ def _require_columns(frame: pd.DataFrame, required: set[str]) -> None:
     missing = required.difference(frame.columns)
     if missing:
         raise ValueError(f"Missing required columns: {sorted(missing)}")
-
-
-def _validate_dedupe_keep(dedupe_keep: str) -> None:
-    if dedupe_keep not in {"earliest", "latest"}:
-        raise ValueError(f"dedupe_keep must be 'earliest' or 'latest', got {dedupe_keep!r}")
 
 
 def _candidate_row(

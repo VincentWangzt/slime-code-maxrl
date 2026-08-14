@@ -1,11 +1,61 @@
 # ForecastBench data preparation
 
-This self-contained `uv` project prepares ForecastBench entirely on the local machine. Modal credentials and
-Modal storage are not needed to download, tokenize, split, analyze, or plot the data. A separate optional uploader
-copies finished artifacts to the training Volume.
+This project prepares the resolved binary ForecastBench questions used for training and evaluation.
 
-The default tokenizer is `Qwen/Qwen3-0.6B`. Token counts exclude special tokens and cover `question`,
-`background`, `source_intro`, and this combined input:
+## Prepare the data
+
+Run these commands from the repository root:
+
+```bash
+uv sync --project forecast_data --locked
+uv run --project forecast_data forecastbench-data download --refresh
+uv run --project forecast_data forecastbench-data process
+```
+
+The download command uses source revision `b3107271ac345f5b879300868dd9f09fc8566dc8`. Raw data is stored in
+`forecast_data/raw/forecastbench-datasets/`; generated files are written to `forecast_data/outputs/`.
+
+## Selection and splits
+
+The processor:
+
+1. Joins each dated question set with its resolution set.
+2. Keeps resolved scalar questions with a string ID and a binary outcome (`0` or `1`).
+3. Expands `{forecast_due_date}` and `{resolution_date}` placeholders.
+4. Keeps the earliest copy of a repeated question instance.
+5. Keeps rows with `resolved_date > 2025-08-01`. This exclusive starting date is the **cutoff**.
+6. Uses `2026-08-01` as the **train-test split time** for the pinned snapshot. This is the latest observed resolution date with more than 500 rows after it.
+7. Places rows after the train-test split time in `eval_time`.
+8. Selects whole `(source, id)` groups from the remaining rows for an approximately 500-row `eval_event` set.
+9. Uses every remaining row for `train`.
+
+An event ID means the pair `(source, id)`. Training retains every eligible row, so an event ID can appear more than once. Event-evaluation IDs are removed from training; time-evaluation IDs may also have earlier rows in training. The three outputs are shuffled deterministically with seed `42`.
+
+The current snapshot contains:
+
+| Split | Rows | Event IDs | Resolution dates |
+| --- | ---: | ---: | --- |
+| `train` | 24,932 | 3,669 | 2025-08-07 to 2026-08-01 |
+| `eval_event` | 498 | 64 | 2025-08-09 to 2026-07-31 |
+| `eval_time` | 649 | 467 | 2026-08-03 to 2026-12-31 |
+
+## Outputs
+
+The cutoff is encoded as `YYMMDD` in each filename. The train-test split time is recorded in the analysis report
+and Parquet metadata.
+
+```text
+forecastbench_train_cutoff_250801.parquet
+forecastbench_eval_event_cutoff_250801.parquet
+forecastbench_eval_time_cutoff_250801.parquet
+forecastbench_analysis_cutoff_250801.txt
+forecastbench_dist_cutoff_250801.png
+forecastbench_tokens_cutoff_250801.png
+```
+
+The text report compares the three splits and summarizes each source. The two PNG files contain bar charts. The distribution image shows resolved values, questions per event ID, and resolution dates; the token image shows question, background, source-introduction, and combined-input token lengths. Binned charts use up to 20 adaptive bins spanning the observed values.
+
+Token counts use `Qwen/Qwen3-0.6B` without special tokens. Combined-input tokens are measured from:
 
 ```text
 Source introduction:
@@ -18,116 +68,16 @@ Background:
 {background}
 ```
 
-## Split semantics
+Each Parquet file contains:
 
-The processor first reads every dated question set, keeps resolved binary scalar questions, expands date
-placeholders, and removes repeated copies of the same question instance. The earliest copy is retained by default;
-`--dedupe-keep latest` changes only this initial repeated-instance cleanup. It then creates three datasets:
-
-1. `cutoff_date` is the exclusive starting boundary. Only questions with `resolved_date > cutoff_date` are
-   included. It defaults to `2025-08-01`.
-2. `train_test_split_time` is the last resolution date allowed in the historical train/event-evaluation pool.
-   `eval_time` contains every question after this boundary. By default, it is the latest observed resolution date
-   for which strictly more than 500 questions remain later; change the threshold with
-   `--minimum-time-eval-size` or set the date directly with `--train-test-split-time`.
-3. From questions on or before the train-test split time, a seeded random ordering of whole `(source, id)` event
-   families is held out until `eval_event` is as close as possible to 500 rows. Whole families are used so an
-   event cannot leak into training. Change the target with `--event-eval-size`.
-4. `train` contains every historical question row whose `(source, id)` family was not selected for `eval_event`.
-   Repeated IDs remain in training; `(source, id)` is a decontamination key, not a training-row deduplication key.
-
-The time split is deliberately only time-constrained: an event ID may have older training rows and later
-time-evaluation rows. The event split is event-constrained: its IDs never occur in training. All three outputs are
-deterministically shuffled with `--seed` (default `42`).
-
-Combination prompts are excluded because their array IDs and direction-specific outcomes do not fit the scalar
-`id`/`resolved_value` schema. Conflicting labels or dates fail explicitly. Dataset provenance and split settings
-are stored in each Parquet file's metadata.
-
-## Local commands
-
-Install the local preparation environment:
-
-```bash
-uv sync --project forecast_data --locked
-```
-
-Download or refresh the pinned source snapshot:
-
-```bash
-uv run --project forecast_data forecastbench-data download \
-  --revision b3107271ac345f5b879300868dd9f09fc8566dc8 \
-  --refresh
-```
-
-Prepare with the default `2025-08-01` cutoff and an automatic train-test split time:
-
-```bash
-uv run --project forecast_data forecastbench-data process
-```
-
-Or choose both boundaries explicitly:
-
-```bash
-uv run --project forecast_data forecastbench-data process \
-  --cutoff-date 2025-08-01 \
-  --train-test-split-time 2026-08-01
-```
-
-The CLI also accepts `--raw-dir`, `--output-dir`, `--minimum-time-eval-size`, `--event-eval-size`, `--seed`,
-`--tokenizer`, `--tokenizer-batch-size`, `--plot-bins`, and `--dedupe-keep`.
-
-Downloaded data lives in the ignored `forecast_data/raw/forecastbench-datasets/` directory. Generated artifacts
-live in `forecast_data/outputs/`.
-
-## Outputs and plots
-
-Only the starting cutoff is encoded as `YYMMDD`; the train-test split time is recorded in Parquet metadata and the
-analysis. For cutoff `2025-08-01`, the files are:
-
-```text
-forecastbench_train_cutoff_250801.parquet
-forecastbench_eval_time_cutoff_250801.parquet
-forecastbench_eval_event_cutoff_250801.parquet
-forecastbench_analysis_cutoff_250801.txt
-forecastbench_dist_cutoff_250801.png
-forecastbench_tokens_cutoff_250801.png
-```
-
-The distribution image contains real Matplotlib bar charts for binary outcomes, question rows per event ID, and
-resolution dates. The token image contains a bar chart for each token-length field. Numeric and date ranges are
-derived from the observed data and divided into at most `--plot-bins` bins (default `20`); no fixed token or date
-range is baked into the code. The text report compares row counts, event IDs, average questions per ID, average
-input tokens, positive ratios, and date ranges across the three splits. Its per-source table also includes average
-questions per event ID.
-
-Each Parquet file has exactly these columns:
-
-| Column | Parquet type | Meaning |
+| Column | Type | Meaning |
 | --- | --- | --- |
-| `id` | string | ForecastBench question/source identifier |
+| `id` | string | Source-specific event identifier |
 | `source` | string | ForecastBench source |
-| `question` | string | Date-expanded question text |
-| `background` | string | Date-expanded background text |
+| `question` | string | Question text with dates expanded |
+| `background` | string | Background text with dates expanded |
 | `freeze_value` | string, nullable | Raw `freeze_datetime_value` |
-| `source_intro` | string | Date-expanded source introduction |
-| `resolved_value` | int8 | Binary outcome, `0` or `1` |
+| `source_intro` | string | Source introduction with dates expanded |
+| `resolved_value` | int8 | Binary outcome |
 | `resolved_date` | date32 | Resolution date |
 
-## Optional Modal upload
-
-Preparation remains local. To make one completed cutoff available to Modal training, upload only its six output
-artifacts:
-
-```bash
-uv sync --project scripts/modal --locked
-uv run --project scripts/modal modal run scripts/modal/upload_forecastbench.py --cutoff 250801
-```
-
-For the pinned snapshot, cutoff `2025-08-01` selects resolved dates from `2025-08-07` through `2026-12-31`, and the
-automatic train-test split time is `2026-08-01`. The upload goes to `/forecast_data/outputs/` in the
-`code-maxrl-slime` Volume. Set `FORECASTBENCH_CUTOFF` when launching a training example if a different starting
-cutoff should be used.
-
-The raw data is distributed by the Forecasting Research Institute under CC BY-SA 4.0; its upstream `LICENSE` is
-preserved in the downloaded snapshot.

@@ -7,7 +7,7 @@ DATASET_REPOSITORY_URL = "https://github.com/forecastingresearch/forecastbench-d
 
 
 def download_dataset(target: Path, revision: str, refresh: bool) -> str:
-    """Create or explicitly refresh a shallow, detached ForecastBench snapshot."""
+    """Download or refresh a ForecastBench source revision."""
     target = target.resolve()
     git_directory = target / ".git"
 
@@ -42,4 +42,3 @@ def dataset_revision(dataset_root: Path) -> str | None:
 
 def _run_git(target: Path, *arguments: str) -> None:
     subprocess.run(["git", "-C", str(target), *arguments], check=True)
-
