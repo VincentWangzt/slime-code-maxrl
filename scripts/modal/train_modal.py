@@ -16,5 +16,10 @@ train = app.function(**training_function_options())(_runtime.train)
 
 @app.local_entrypoint()
 def main(*arguments: str) -> None:
-    gpu_count, slime_arguments = parse_entrypoint_arguments(arguments)
-    train.with_options(**training_resources(gpu_count)).remote(slime_arguments, gpu_count)
+    gpu_count, detach, slime_arguments = parse_entrypoint_arguments(arguments)
+    configured_train = train.with_options(**training_resources(gpu_count))
+    if detach:
+        function_call = configured_train.spawn(slime_arguments, gpu_count)
+        print(f"Spawned detached Modal training call {function_call.object_id}.")
+    else:
+        configured_train.remote(slime_arguments, gpu_count)

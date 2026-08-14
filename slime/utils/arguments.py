@@ -949,6 +949,16 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                 ),
             )
             parser.add_argument(
+                "--regression-output-transform",
+                type=str,
+                choices=["identity", "sigmoid"],
+                default="identity",
+                help=(
+                    "Transform applied to scalar-head logits before regression loss and evaluation. "
+                    "Use sigmoid for targets that represent probabilities."
+                ),
+            )
+            parser.add_argument(
                 "--custom-loss-function-path",
                 type=str,
                 default=None,

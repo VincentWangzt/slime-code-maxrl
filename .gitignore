@@ -193,3 +193,8 @@ glm/
 _examples_synced/
 .env
 .DS_Store
+
+# ForecastBench source snapshots
+/forecast_data/raw/
+!/forecast_data/outputs/
+!/forecast_data/outputs/**

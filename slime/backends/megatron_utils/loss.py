@@ -38,6 +38,15 @@ ROLLOUT_TOP_P_TOKEN_KEYS = (
 )
 
 
+def transform_regression_predictions(predictions: torch.Tensor, transform: str) -> torch.Tensor:
+    """Map scalar-head logits into the configured prediction space."""
+    if transform == "identity":
+        return predictions
+    if transform == "sigmoid":
+        return predictions.sigmoid()
+    raise ValueError(f"Unknown regression output transform: {transform!r}.")
+
+
 def extract_last_token_predictions(logits: torch.Tensor, total_lengths: list[int]) -> torch.Tensor:
     """Select each packed sample's final real-token scalar, before trailing padding."""
     if logits.dtype != torch.float32:
@@ -82,7 +91,10 @@ def get_last_token_predictions(
     if any(int(length) != 1 for length in response_lengths):
         raise ValueError(f"Regression requires one terminal selection per sample, got {response_lengths}.")
 
-    predictions = extract_last_token_predictions(logits, total_lengths)
+    predictions = transform_regression_predictions(
+        extract_last_token_predictions(logits, total_lengths),
+        args.regression_output_transform,
+    )
     return logits.new_empty((0,)), {"predictions": list(predictions.unbind())}
 
 
@@ -1297,7 +1309,10 @@ def regression_loss_function(
     if any(int(length) != 1 for length in response_lengths):
         raise ValueError(f"Regression requires one terminal selection per sample, got {response_lengths}.")
 
-    predictions = extract_last_token_predictions(logits, batch["total_lengths"])
+    predictions = transform_regression_predictions(
+        extract_last_token_predictions(logits, batch["total_lengths"]),
+        args.regression_output_transform,
+    )
     targets = torch.stack(batch["regression_targets"]).to(device=logits.device, dtype=torch.float32).reshape(-1)
     if targets.numel() != predictions.numel():
         raise ValueError(

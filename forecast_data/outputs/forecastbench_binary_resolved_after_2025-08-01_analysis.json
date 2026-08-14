@@ -1,0 +1,317 @@
+{
+  "generated_at_utc": "2026-08-13T15:37:31.751755+00:00",
+  "source": {
+    "repository": "https://github.com/forecastingresearch/forecastbench-datasets",
+    "revision": "b3107271ac345f5b879300868dd9f09fc8566dc8",
+    "question_sets": [
+      "2024-07-21-llm.json",
+      "2025-03-02-llm.json",
+      "2025-03-16-llm.json",
+      "2025-03-30-llm.json",
+      "2025-04-13-llm.json",
+      "2025-04-27-llm.json",
+      "2025-05-11-llm.json",
+      "2025-05-25-llm.json",
+      "2025-06-08-llm.json",
+      "2025-06-22-llm.json",
+      "2025-08-03-llm.json",
+      "2025-08-17-llm.json",
+      "2025-08-31-llm.json",
+      "2025-10-26-llm.json",
+      "2025-11-09-llm.json",
+      "2025-11-23-llm.json",
+      "2025-12-07-llm.json",
+      "2025-12-21-llm.json",
+      "2026-01-04-llm.json",
+      "2026-01-18-llm.json",
+      "2026-02-01-llm.json",
+      "2026-02-15-llm.json",
+      "2026-03-01-llm.json",
+      "2026-03-15-llm.json",
+      "2026-03-29-llm.json",
+      "2026-04-12-llm.json",
+      "2026-04-26-llm.json",
+      "2026-05-10-llm.json",
+      "2026-05-24-llm.json",
+      "2026-06-07-llm.json",
+      "2026-06-21-llm.json",
+      "2026-07-05-llm.json",
+      "2026-07-19-llm.json",
+      "2026-08-02-llm.json"
+    ]
+  },
+  "selection": {
+    "cutoff_date": "2025-08-01",
+    "cutoff_rule": "resolved_date > cutoff_date",
+    "requires_resolved_true": true,
+    "allowed_resolved_values": [
+      0,
+      1
+    ],
+    "composite_questions_included": false,
+    "dedupe_keep": "earliest"
+  },
+  "filter_funnel": {
+    "question_sets": 34,
+    "question_records": 23484,
+    "resolution_records": 117794,
+    "composite_question_records_excluded": 6468,
+    "resolution_records_on_or_before_cutoff_excluded": 40809,
+    "resolution_records_after_cutoff": 76985,
+    "unresolved_records_excluded": 8845,
+    "resolved_records_after_cutoff": 68140,
+    "binary_resolved_records_after_cutoff": 68140,
+    "composite_resolution_records_excluded": 40768,
+    "joined_candidate_rows": 27372,
+    "duplicate_candidate_rows_excluded": 1293,
+    "retained_rows": 26079
+  },
+  "dataset": {
+    "rows": 26079,
+    "columns": [
+      "id",
+      "source",
+      "question",
+      "background",
+      "freeze_value",
+      "source_intro",
+      "resolved_value",
+      "resolved_date"
+    ],
+    "sources": 9,
+    "missing_freeze_values": 0,
+    "missing_backgrounds": 34,
+    "missing_source_intros": 0
+  },
+  "resolved_value_distribution": [
+    {
+      "value": 0,
+      "rows": 16206,
+      "share_percent": 62.141953
+    },
+    {
+      "value": 1,
+      "rows": 9873,
+      "share_percent": 37.858047
+    }
+  ],
+  "tokenization": {
+    "tokenizer": "Qwen/Qwen3-0.6B",
+    "add_special_tokens": false,
+    "combined_input_format": "Source introduction:\\n{source_intro}\\n\\nQuestion:\\n{question}\\n\\nBackground:\\n{background}",
+    "statistics": {
+      "question_tokens": {
+        "min": 6,
+        "mean": 83.266114,
+        "median": 52.0,
+        "p90": 213.0,
+        "p95": 220.0,
+        "max": 240
+      },
+      "background_tokens": {
+        "min": 0,
+        "mean": 237.398865,
+        "median": 236.0,
+        "p90": 407.0,
+        "p95": 472.0,
+        "max": 2345
+      },
+      "source_intro_tokens": {
+        "min": 28,
+        "mean": 43.342766,
+        "median": 39.0,
+        "p90": 57.0,
+        "p95": 57.0,
+        "max": 57
+      },
+      "input_tokens": {
+        "min": 69,
+        "mean": 370.812339,
+        "median": 338.0,
+        "p90": 517.0,
+        "p95": 581.0,
+        "max": 2441
+      }
+    },
+    "input_token_histogram": [
+      {
+        "range": "0-127",
+        "rows": 82
+      },
+      {
+        "range": "128-255",
+        "rows": 9701
+      },
+      {
+        "range": "256-511",
+        "rows": 12712
+      },
+      {
+        "range": "512-1023",
+        "rows": 2962
+      },
+      {
+        "range": "1024-2047",
+        "rows": 621
+      },
+      {
+        "range": "2048-4095",
+        "rows": 1
+      },
+      {
+        "range": "4096-8191",
+        "rows": 0
+      },
+      {
+        "range": "8192-16383",
+        "rows": 0
+      },
+      {
+        "range": "16384+",
+        "rows": 0
+      }
+    ]
+  },
+  "per_source": [
+    {
+      "source": "yfinance",
+      "rows": 5140,
+      "share_percent": 19.709345,
+      "resolved_0": 2192,
+      "resolved_1": 2948,
+      "positive_rate": 0.573541,
+      "median_input_tokens": 409.0,
+      "p95_input_tokens": 535.0,
+      "max_input_tokens": 1000
+    },
+    {
+      "source": "acled",
+      "rows": 5114,
+      "share_percent": 19.609648,
+      "resolved_0": 4584,
+      "resolved_1": 530,
+      "positive_rate": 0.103637,
+      "median_input_tokens": 509.0,
+      "p95_input_tokens": 531.0,
+      "max_input_tokens": 536
+    },
+    {
+      "source": "fred",
+      "rows": 5114,
+      "share_percent": 19.609648,
+      "resolved_0": 2752,
+      "resolved_1": 2362,
+      "positive_rate": 0.461869,
+      "median_input_tokens": 322.0,
+      "p95_input_tokens": 1380.0,
+      "max_input_tokens": 1625
+    },
+    {
+      "source": "wikipedia",
+      "rows": 4801,
+      "share_percent": 18.409448,
+      "resolved_0": 3726,
+      "resolved_1": 1075,
+      "positive_rate": 0.223912,
+      "median_input_tokens": 212.0,
+      "p95_input_tokens": 492.0,
+      "max_input_tokens": 494
+    },
+    {
+      "source": "dbnomics",
+      "rows": 4599,
+      "share_percent": 17.634879,
+      "resolved_0": 1953,
+      "resolved_1": 2646,
+      "positive_rate": 0.575342,
+      "median_input_tokens": 169.0,
+      "p95_input_tokens": 176.0,
+      "max_input_tokens": 182
+    },
+    {
+      "source": "polymarket",
+      "rows": 886,
+      "share_percent": 3.39737,
+      "resolved_0": 704,
+      "resolved_1": 182,
+      "positive_rate": 0.205418,
+      "median_input_tokens": 245.0,
+      "p95_input_tokens": 421.25,
+      "max_input_tokens": 691
+    },
+    {
+      "source": "manifold",
+      "rows": 241,
+      "share_percent": 0.924115,
+      "resolved_0": 166,
+      "resolved_1": 75,
+      "positive_rate": 0.311203,
+      "median_input_tokens": 177.0,
+      "p95_input_tokens": 530.0,
+      "max_input_tokens": 1242
+    },
+    {
+      "source": "metaculus",
+      "rows": 160,
+      "share_percent": 0.61352,
+      "resolved_0": 110,
+      "resolved_1": 50,
+      "positive_rate": 0.3125,
+      "median_input_tokens": 412.5,
+      "p95_input_tokens": 1050.3,
+      "max_input_tokens": 1750
+    },
+    {
+      "source": "infer",
+      "rows": 24,
+      "share_percent": 0.092028,
+      "resolved_0": 19,
+      "resolved_1": 5,
+      "positive_rate": 0.208333,
+      "median_input_tokens": 899.0,
+      "p95_input_tokens": 1387.6,
+      "max_input_tokens": 2441
+    }
+  ],
+  "split": {
+    "method": "deterministic question-family-grouped, source-and-label-balanced allocation",
+    "group_columns": [
+      "source",
+      "id"
+    ],
+    "seed": 42,
+    "rows_shuffled": true,
+    "requested_test_fraction": 0.1,
+    "train_rows": 23472,
+    "test_rows": 2607,
+    "actual_test_fraction": 0.099965,
+    "question_families": 3755,
+    "train_question_families": 3386,
+    "test_question_families": 369,
+    "question_family_overlap": 0,
+    "train_resolved_value_distribution": [
+      {
+        "value": 0,
+        "rows": 14587,
+        "share_percent": 62.146387
+      },
+      {
+        "value": 1,
+        "rows": 8885,
+        "share_percent": 37.853613
+      }
+    ],
+    "test_resolved_value_distribution": [
+      {
+        "value": 0,
+        "rows": 1619,
+        "share_percent": 62.102033
+      },
+      {
+        "value": 1,
+        "rows": 988,
+        "share_percent": 37.897967
+      }
+    ]
+  }
+}

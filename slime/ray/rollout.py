@@ -592,6 +592,8 @@ class RolloutManager:
 
     def get_num_rollout_per_epoch(self):
         assert self.args.rollout_global_dataset
+        if hasattr(self.data_source, "get_num_batches_per_epoch"):
+            return self.data_source.get_num_batches_per_epoch(self.args.rollout_batch_size)
         return len(self.data_source) // self.args.rollout_batch_size
 
     def generate(self, rollout_id):
@@ -955,7 +957,13 @@ class RolloutManager:
         total_lengths = [len(t) for t in data["tokens"]]
         data["total_lengths"] = total_lengths
 
-        schedule_global_batch_size = self.args.global_batch_size if global_batch_size is None else global_batch_size
+        if global_batch_size is None and self.args.loss_type == "regression_loss":
+            # A scalar-regression epoch may end with fewer prompts than the
+            # configured global batch. Schedule that final batch without
+            # dropping examples or wrapping into the next epoch.
+            schedule_global_batch_size = len(set(data["rollout_ids"]))
+        else:
+            schedule_global_batch_size = self.args.global_batch_size if global_batch_size is None else global_batch_size
         partitions, micro_batch_indices, num_microbatches, global_batch_sizes = build_dp_schedule(
             self.args,
             self.train_parallel_config,

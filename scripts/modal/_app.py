@@ -22,6 +22,20 @@ _RUNTIME_SCRIPTS_IGNORE = (
     "**/.ruff_cache/**",
 )
 
+_FORECAST_DATA_IGNORE = (
+    ".venv",
+    ".venv/**",
+    ".venv*",
+    "**/.venv/**",
+    "**/__pycache__/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "raw",
+    "raw/**",
+    "outputs",
+    "outputs/**",
+)
+
 
 DOTENV_SECRET = modal.Secret.from_dotenv(REPO_ROOT)
 VOLUME = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
@@ -120,6 +134,12 @@ RUNTIME_IMAGE = (
         copy=False,
         ignore=_RUNTIME_SCRIPTS_IGNORE,
     )
+    .add_local_dir(
+        REPO_ROOT / "forecast_data",
+        remote_path=f"{REMOTE_REPO_ROOT}/forecast_data",
+        copy=False,
+        ignore=_FORECAST_DATA_IGNORE,
+    )
 )
 
 
@@ -155,12 +175,13 @@ def validate_gpu_count(gpu_count: int) -> None:
         raise ValueError(f"--modal-gpu-count must be between 1 and 8, got {gpu_count}.")
 
 
-def parse_entrypoint_arguments(arguments: Sequence[str]) -> tuple[int, list[str]]:
+def parse_entrypoint_arguments(arguments: Sequence[str]) -> tuple[int, bool, list[str]]:
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--modal-gpu-count", type=int, required=True)
+    parser.add_argument("--modal-detach", action="store_true")
     modal_arguments, slime_arguments = parser.parse_known_args(arguments)
     validate_gpu_count(modal_arguments.modal_gpu_count)
-    return modal_arguments.modal_gpu_count, slime_arguments
+    return modal_arguments.modal_gpu_count, modal_arguments.modal_detach, slime_arguments
 
 
 def training_resources(gpu_count: int) -> dict[str, object]:

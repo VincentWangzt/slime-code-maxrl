@@ -139,6 +139,17 @@ uv run --project scripts/modal modal run scripts/modal/train_async_modal.py --mo
 for the requested H100s. Slime validates all remaining training arguments. Jobs have a 24-hour
 timeout and no automatic retries.
 
+For a long run that must survive a local network interruption, combine Modal's app detachment with
+the entrypoint's asynchronous function call:
+
+```bash
+uv run --project scripts/modal modal run --detach scripts/modal/train_modal.py --modal-gpu-count 4 --modal-detach -- <slime-args>
+```
+
+Without `--modal-detach`, the entrypoint retains its synchronous behavior and waits for training to
+finish. Passing only Modal's outer `--detach` is insufficient because canceling a synchronous
+`.remote()` input also cancels its training container.
+
 ## Logs
 
 ```bash

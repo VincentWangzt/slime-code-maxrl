@@ -57,6 +57,16 @@ def test_terminal_extractor_uses_each_packed_sample_tail_and_ignores_padding():
 
 
 @pytest.mark.unit
+def test_sigmoid_regression_output_transform_bounds_probabilities():
+    predictions = loss_module.transform_regression_predictions(
+        torch.tensor([-2.0, 0.0, 2.0]),
+        "sigmoid",
+    )
+
+    assert predictions.tolist() == pytest.approx([0.11920292, 0.5, 0.88079708])
+
+
+@pytest.mark.unit
 def test_regression_loss_reduces_one_scalar_per_sample_and_only_tail_has_gradient(monkeypatch):
     monkeypatch.setattr(loss_module.mpu, "get_context_parallel_world_size", lambda: 1)
     monkeypatch.setattr(
@@ -77,6 +87,7 @@ def test_regression_loss_reduces_one_scalar_per_sample_and_only_tail_has_gradien
         calculate_per_token_loss=False,
         recompute_loss_function=False,
         allgather_cp=False,
+        regression_output_transform="identity",
     )
 
     scaled_loss, _, log = loss_module.loss_function(
