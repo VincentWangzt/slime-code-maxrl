@@ -1,0 +1,947 @@
+{
+  "generated_at_utc": "2026-08-14T13:10:29.381158+00:00",
+  "source": {
+    "repository": "https://github.com/forecastingresearch/forecastbench-datasets",
+    "revision": "b3107271ac345f5b879300868dd9f09fc8566dc8",
+    "question_sets": [
+      "2024-07-21-llm.json",
+      "2025-03-02-llm.json",
+      "2025-03-16-llm.json",
+      "2025-03-30-llm.json",
+      "2025-04-13-llm.json",
+      "2025-04-27-llm.json",
+      "2025-05-11-llm.json",
+      "2025-05-25-llm.json",
+      "2025-06-08-llm.json",
+      "2025-06-22-llm.json",
+      "2025-08-03-llm.json",
+      "2025-08-17-llm.json",
+      "2025-08-31-llm.json",
+      "2025-10-26-llm.json",
+      "2025-11-09-llm.json",
+      "2025-11-23-llm.json",
+      "2025-12-07-llm.json",
+      "2025-12-21-llm.json",
+      "2026-01-04-llm.json",
+      "2026-01-18-llm.json",
+      "2026-02-01-llm.json",
+      "2026-02-15-llm.json",
+      "2026-03-01-llm.json",
+      "2026-03-15-llm.json",
+      "2026-03-29-llm.json",
+      "2026-04-12-llm.json",
+      "2026-04-26-llm.json",
+      "2026-05-10-llm.json",
+      "2026-05-24-llm.json",
+      "2026-06-07-llm.json",
+      "2026-06-21-llm.json",
+      "2026-07-05-llm.json",
+      "2026-07-19-llm.json",
+      "2026-08-02-llm.json"
+    ]
+  },
+  "selection": {
+    "cutoff_date": "2025-08-01",
+    "cutoff_rule": "resolved_date > cutoff_date is included",
+    "train_test_split_time": "2026-08-01",
+    "train_test_split_time_source": "automatic",
+    "train_test_split_rule": "resolved_date > train_test_split_time goes to eval_time",
+    "automatic_train_test_split_rule": "latest observed resolved_date with more than minimum_time_eval_size later rows",
+    "minimum_time_eval_size": 500,
+    "requires_resolved_true": true,
+    "allowed_resolved_values": [
+      0,
+      1
+    ],
+    "composite_questions_included": false,
+    "repeated_instance_dedupe_keep": "earliest"
+  },
+  "filter_funnel": {
+    "question_sets": 34,
+    "question_records": 23484,
+    "resolution_records": 117794,
+    "composite_question_records_excluded": 6468,
+    "resolution_records_on_or_before_cutoff_excluded": 40809,
+    "resolution_records_after_cutoff": 76985,
+    "unresolved_records_excluded": 8845,
+    "resolved_records_after_cutoff": 68140,
+    "binary_resolved_records_after_cutoff": 68140,
+    "composite_resolution_records_excluded": 40768,
+    "joined_candidate_rows": 27372,
+    "duplicate_candidate_rows_excluded": 1293,
+    "retained_rows": 26079
+  },
+  "dataset": {
+    "rows": 26079,
+    "columns": [
+      "id",
+      "source",
+      "question",
+      "background",
+      "freeze_value",
+      "source_intro",
+      "resolved_value",
+      "resolved_date"
+    ],
+    "sources": 9,
+    "question_families": 3755,
+    "resolved_date_range": {
+      "start": "2025-08-07",
+      "end": "2026-12-31"
+    },
+    "missing_freeze_values": 0,
+    "missing_backgrounds": 34,
+    "missing_source_intros": 0
+  },
+  "distributions": {
+    "resolved_value": [
+      {
+        "value": 0,
+        "rows": 16206,
+        "share_percent": 62.141953
+      },
+      {
+        "value": 1,
+        "rows": 9873,
+        "share_percent": 37.858047
+      }
+    ],
+    "questions_per_id": [
+      {
+        "range": "1-5.8",
+        "lower": 1.0,
+        "upper": 5.75,
+        "rows": 2616
+      },
+      {
+        "range": "5.8-10.5",
+        "lower": 5.75,
+        "upper": 10.5,
+        "rows": 466
+      },
+      {
+        "range": "10.5-15.2",
+        "lower": 10.5,
+        "upper": 15.25,
+        "rows": 251
+      },
+      {
+        "range": "15.2-20",
+        "lower": 15.25,
+        "upper": 20.0,
+        "rows": 127
+      },
+      {
+        "range": "20-24.8",
+        "lower": 20.0,
+        "upper": 24.75,
+        "rows": 84
+      },
+      {
+        "range": "24.8-29.5",
+        "lower": 24.75,
+        "upper": 29.5,
+        "rows": 53
+      },
+      {
+        "range": "29.5-34.2",
+        "lower": 29.5,
+        "upper": 34.25,
+        "rows": 42
+      },
+      {
+        "range": "34.2-39",
+        "lower": 34.25,
+        "upper": 39.0,
+        "rows": 23
+      },
+      {
+        "range": "39-43.8",
+        "lower": 39.0,
+        "upper": 43.75,
+        "rows": 25
+      },
+      {
+        "range": "43.8-48.5",
+        "lower": 43.75,
+        "upper": 48.5,
+        "rows": 12
+      },
+      {
+        "range": "48.5-53.2",
+        "lower": 48.5,
+        "upper": 53.25,
+        "rows": 4
+      },
+      {
+        "range": "53.2-58",
+        "lower": 53.25,
+        "upper": 58.0,
+        "rows": 0
+      },
+      {
+        "range": "58-62.8",
+        "lower": 58.0,
+        "upper": 62.75,
+        "rows": 1
+      },
+      {
+        "range": "62.8-67.5",
+        "lower": 62.75,
+        "upper": 67.5,
+        "rows": 1
+      },
+      {
+        "range": "67.5-72.2",
+        "lower": 67.5,
+        "upper": 72.25,
+        "rows": 2
+      },
+      {
+        "range": "72.2-77",
+        "lower": 72.25,
+        "upper": 77.0,
+        "rows": 0
+      },
+      {
+        "range": "77-81.8",
+        "lower": 77.0,
+        "upper": 81.75,
+        "rows": 5
+      },
+      {
+        "range": "81.8-86.5",
+        "lower": 81.75,
+        "upper": 86.5,
+        "rows": 8
+      },
+      {
+        "range": "86.5-91.2",
+        "lower": 86.5,
+        "upper": 91.25,
+        "rows": 15
+      },
+      {
+        "range": "91.2-96",
+        "lower": 91.25,
+        "upper": 96.0,
+        "rows": 20
+      }
+    ],
+    "resolved_date": [
+      {
+        "range": "2025-08-07-2025-09-02",
+        "rows": 1439
+      },
+      {
+        "range": "2025-09-01-2025-09-28",
+        "rows": 2025
+      },
+      {
+        "range": "2025-09-27-2025-10-23",
+        "rows": 594
+      },
+      {
+        "range": "2025-10-22-2025-11-18",
+        "rows": 1682
+      },
+      {
+        "range": "2025-11-17-2025-12-13",
+        "rows": 1653
+      },
+      {
+        "range": "2025-12-12-2026-01-08",
+        "rows": 1551
+      },
+      {
+        "range": "2026-01-07-2026-02-02",
+        "rows": 1309
+      },
+      {
+        "range": "2026-02-01-2026-02-28",
+        "rows": 2036
+      },
+      {
+        "range": "2026-02-27-2026-03-25",
+        "rows": 2131
+      },
+      {
+        "range": "2026-03-24-2026-04-20",
+        "rows": 2142
+      },
+      {
+        "range": "2026-04-19-2026-05-16",
+        "rows": 2157
+      },
+      {
+        "range": "2026-05-15-2026-06-10",
+        "rows": 2614
+      },
+      {
+        "range": "2026-06-09-2026-07-06",
+        "rows": 2146
+      },
+      {
+        "range": "2026-07-05-2026-07-31",
+        "rows": 1706
+      },
+      {
+        "range": "2026-07-30-2026-08-26",
+        "rows": 893
+      },
+      {
+        "range": "2026-08-25-2026-09-20",
+        "rows": 0
+      },
+      {
+        "range": "2026-09-19-2026-10-16",
+        "rows": 0
+      },
+      {
+        "range": "2026-10-15-2026-11-10",
+        "rows": 0
+      },
+      {
+        "range": "2026-11-09-2026-12-06",
+        "rows": 0
+      },
+      {
+        "range": "2026-12-05-2026-12-31",
+        "rows": 1
+      }
+    ]
+  },
+  "tokenization": {
+    "tokenizer": "Qwen/Qwen3-0.6B",
+    "add_special_tokens": false,
+    "combined_input_format": "Source introduction:\\n{source_intro}\\n\\nQuestion:\\n{question}\\n\\nBackground:\\n{background}",
+    "statistics": {
+      "question_tokens": {
+        "min": 6,
+        "mean": 83.266114,
+        "median": 52.0,
+        "p90": 213.0,
+        "p95": 220.0,
+        "max": 240
+      },
+      "background_tokens": {
+        "min": 0,
+        "mean": 237.398865,
+        "median": 236.0,
+        "p90": 407.0,
+        "p95": 472.0,
+        "max": 2345
+      },
+      "source_intro_tokens": {
+        "min": 28,
+        "mean": 43.342766,
+        "median": 39.0,
+        "p90": 57.0,
+        "p95": 57.0,
+        "max": 57
+      },
+      "input_tokens": {
+        "min": 69,
+        "mean": 370.812339,
+        "median": 338.0,
+        "p90": 517.0,
+        "p95": 581.0,
+        "max": 2441
+      }
+    },
+    "histograms": {
+      "question_tokens": [
+        {
+          "range": "6-17.7",
+          "lower": 6.0,
+          "upper": 17.7,
+          "rows": 742
+        },
+        {
+          "range": "17.7-29.4",
+          "lower": 17.7,
+          "upper": 29.4,
+          "rows": 1815
+        },
+        {
+          "range": "29.4-41.1",
+          "lower": 29.4,
+          "upper": 41.1,
+          "rows": 1625
+        },
+        {
+          "range": "41.1-52.8",
+          "lower": 41.1,
+          "upper": 52.8,
+          "rows": 9378
+        },
+        {
+          "range": "52.8-64.5",
+          "lower": 52.8,
+          "upper": 64.5,
+          "rows": 1515
+        },
+        {
+          "range": "64.5-76.2",
+          "lower": 64.5,
+          "upper": 76.2,
+          "rows": 723
+        },
+        {
+          "range": "76.2-87.9",
+          "lower": 76.2,
+          "upper": 87.9,
+          "rows": 5167
+        },
+        {
+          "range": "87.9-99.6",
+          "lower": 87.9,
+          "upper": 99.6,
+          "rows": 0
+        },
+        {
+          "range": "99.6-111.3",
+          "lower": 99.6,
+          "upper": 111.3,
+          "rows": 0
+        },
+        {
+          "range": "111.3-123",
+          "lower": 111.3,
+          "upper": 123.0,
+          "rows": 0
+        },
+        {
+          "range": "123-134.7",
+          "lower": 123.0,
+          "upper": 134.7,
+          "rows": 0
+        },
+        {
+          "range": "134.7-146.4",
+          "lower": 134.7,
+          "upper": 146.4,
+          "rows": 0
+        },
+        {
+          "range": "146.4-158.1",
+          "lower": 146.4,
+          "upper": 158.1,
+          "rows": 0
+        },
+        {
+          "range": "158.1-169.8",
+          "lower": 158.1,
+          "upper": 169.8,
+          "rows": 0
+        },
+        {
+          "range": "169.8-181.5",
+          "lower": 169.8,
+          "upper": 181.5,
+          "rows": 167
+        },
+        {
+          "range": "181.5-193.2",
+          "lower": 181.5,
+          "upper": 193.2,
+          "rows": 489
+        },
+        {
+          "range": "193.2-204.9",
+          "lower": 193.2,
+          "upper": 204.9,
+          "rows": 1680
+        },
+        {
+          "range": "204.9-216.6",
+          "lower": 204.9,
+          "upper": 216.6,
+          "rows": 1051
+        },
+        {
+          "range": "216.6-228.3",
+          "lower": 216.6,
+          "upper": 228.3,
+          "rows": 1326
+        },
+        {
+          "range": "228.3-240",
+          "lower": 228.3,
+          "upper": 240.0,
+          "rows": 401
+        }
+      ],
+      "background_tokens": [
+        {
+          "range": "0-117.2",
+          "lower": 0.0,
+          "upper": 117.25,
+          "rows": 5687
+        },
+        {
+          "range": "117.2-234.5",
+          "lower": 117.25,
+          "upper": 234.5,
+          "rows": 7241
+        },
+        {
+          "range": "234.5-351.8",
+          "lower": 234.5,
+          "upper": 351.75,
+          "rows": 8742
+        },
+        {
+          "range": "351.8-469",
+          "lower": 351.75,
+          "upper": 469.0,
+          "rows": 3096
+        },
+        {
+          "range": "469-586.2",
+          "lower": 469.0,
+          "upper": 586.25,
+          "rows": 226
+        },
+        {
+          "range": "586.2-703.5",
+          "lower": 586.25,
+          "upper": 703.5,
+          "rows": 68
+        },
+        {
+          "range": "703.5-820.8",
+          "lower": 703.5,
+          "upper": 820.75,
+          "rows": 25
+        },
+        {
+          "range": "820.8-938",
+          "lower": 820.75,
+          "upper": 938.0,
+          "rows": 576
+        },
+        {
+          "range": "938-1055.2",
+          "lower": 938.0,
+          "upper": 1055.25,
+          "rows": 95
+        },
+        {
+          "range": "1055.2-1172.5",
+          "lower": 1055.25,
+          "upper": 1172.5,
+          "rows": 3
+        },
+        {
+          "range": "1172.5-1289.8",
+          "lower": 1172.5,
+          "upper": 1289.75,
+          "rows": 156
+        },
+        {
+          "range": "1289.8-1407",
+          "lower": 1289.75,
+          "upper": 1407.0,
+          "rows": 131
+        },
+        {
+          "range": "1407-1524.2",
+          "lower": 1407.0,
+          "upper": 1524.25,
+          "rows": 29
+        },
+        {
+          "range": "1524.2-1641.5",
+          "lower": 1524.25,
+          "upper": 1641.5,
+          "rows": 1
+        },
+        {
+          "range": "1641.5-1758.8",
+          "lower": 1641.5,
+          "upper": 1758.75,
+          "rows": 2
+        },
+        {
+          "range": "1758.8-1876",
+          "lower": 1758.75,
+          "upper": 1876.0,
+          "rows": 0
+        },
+        {
+          "range": "1876-1993.2",
+          "lower": 1876.0,
+          "upper": 1993.25,
+          "rows": 0
+        },
+        {
+          "range": "1993.2-2110.5",
+          "lower": 1993.25,
+          "upper": 2110.5,
+          "rows": 0
+        },
+        {
+          "range": "2110.5-2227.8",
+          "lower": 2110.5,
+          "upper": 2227.75,
+          "rows": 0
+        },
+        {
+          "range": "2227.8-2345",
+          "lower": 2227.75,
+          "upper": 2345.0,
+          "rows": 1
+        }
+      ],
+      "source_intro_tokens": [
+        {
+          "range": "28-32.1",
+          "lower": 28.0,
+          "upper": 32.142857,
+          "rows": 4801
+        },
+        {
+          "range": "32.1-36.3",
+          "lower": 32.142857,
+          "upper": 36.285714,
+          "rows": 0
+        },
+        {
+          "range": "36.3-40.4",
+          "lower": 36.285714,
+          "upper": 40.428571,
+          "rows": 10254
+        },
+        {
+          "range": "40.4-44.6",
+          "lower": 40.428571,
+          "upper": 44.571429,
+          "rows": 0
+        },
+        {
+          "range": "44.6-48.7",
+          "lower": 44.571429,
+          "upper": 48.714286,
+          "rows": 0
+        },
+        {
+          "range": "48.7-52.9",
+          "lower": 48.714286,
+          "upper": 52.857143,
+          "rows": 1311
+        },
+        {
+          "range": "52.9-57",
+          "lower": 52.857143,
+          "upper": 57.0,
+          "rows": 9713
+        }
+      ],
+      "input_tokens": [
+        {
+          "range": "69-187.6",
+          "lower": 69.0,
+          "upper": 187.6,
+          "rows": 5092
+        },
+        {
+          "range": "187.6-306.2",
+          "lower": 187.6,
+          "upper": 306.2,
+          "rows": 6714
+        },
+        {
+          "range": "306.2-424.8",
+          "lower": 306.2,
+          "upper": 424.8,
+          "rows": 3429
+        },
+        {
+          "range": "424.8-543.4",
+          "lower": 424.8,
+          "upper": 543.4,
+          "rows": 9438
+        },
+        {
+          "range": "543.4-662",
+          "lower": 543.4,
+          "upper": 662.0,
+          "rows": 273
+        },
+        {
+          "range": "662-780.6",
+          "lower": 662.0,
+          "upper": 780.6,
+          "rows": 111
+        },
+        {
+          "range": "780.6-899.2",
+          "lower": 780.6,
+          "upper": 899.2,
+          "rows": 28
+        },
+        {
+          "range": "899.2-1017.8",
+          "lower": 899.2,
+          "upper": 1017.8,
+          "rows": 367
+        },
+        {
+          "range": "1017.8-1136.4",
+          "lower": 1017.8,
+          "upper": 1136.4,
+          "rows": 304
+        },
+        {
+          "range": "1136.4-1255",
+          "lower": 1136.4,
+          "upper": 1255.0,
+          "rows": 3
+        },
+        {
+          "range": "1255-1373.6",
+          "lower": 1255.0,
+          "upper": 1373.6,
+          "rows": 32
+        },
+        {
+          "range": "1373.6-1492.2",
+          "lower": 1373.6,
+          "upper": 1492.2,
+          "rows": 250
+        },
+        {
+          "range": "1492.2-1610.8",
+          "lower": 1492.2,
+          "upper": 1610.8,
+          "rows": 26
+        },
+        {
+          "range": "1610.8-1729.4",
+          "lower": 1610.8,
+          "upper": 1729.4,
+          "rows": 9
+        },
+        {
+          "range": "1729.4-1848",
+          "lower": 1729.4,
+          "upper": 1848.0,
+          "rows": 2
+        },
+        {
+          "range": "1848-1966.6",
+          "lower": 1848.0,
+          "upper": 1966.6,
+          "rows": 0
+        },
+        {
+          "range": "1966.6-2085.2",
+          "lower": 1966.6,
+          "upper": 2085.2,
+          "rows": 0
+        },
+        {
+          "range": "2085.2-2203.8",
+          "lower": 2085.2,
+          "upper": 2203.8,
+          "rows": 0
+        },
+        {
+          "range": "2203.8-2322.4",
+          "lower": 2203.8,
+          "upper": 2322.4,
+          "rows": 0
+        },
+        {
+          "range": "2322.4-2441",
+          "lower": 2322.4,
+          "upper": 2441.0,
+          "rows": 1
+        }
+      ]
+    }
+  },
+  "per_source": [
+    {
+      "source": "yfinance",
+      "rows": 5140,
+      "share_percent": 19.709345,
+      "resolved_0": 2192,
+      "resolved_1": 2948,
+      "positive_rate": 0.573541,
+      "median_input_tokens": 409.0,
+      "p95_input_tokens": 535.0,
+      "max_input_tokens": 1000
+    },
+    {
+      "source": "acled",
+      "rows": 5114,
+      "share_percent": 19.609648,
+      "resolved_0": 4584,
+      "resolved_1": 530,
+      "positive_rate": 0.103637,
+      "median_input_tokens": 509.0,
+      "p95_input_tokens": 531.0,
+      "max_input_tokens": 536
+    },
+    {
+      "source": "fred",
+      "rows": 5114,
+      "share_percent": 19.609648,
+      "resolved_0": 2752,
+      "resolved_1": 2362,
+      "positive_rate": 0.461869,
+      "median_input_tokens": 322.0,
+      "p95_input_tokens": 1380.0,
+      "max_input_tokens": 1625
+    },
+    {
+      "source": "wikipedia",
+      "rows": 4801,
+      "share_percent": 18.409448,
+      "resolved_0": 3726,
+      "resolved_1": 1075,
+      "positive_rate": 0.223912,
+      "median_input_tokens": 212.0,
+      "p95_input_tokens": 492.0,
+      "max_input_tokens": 494
+    },
+    {
+      "source": "dbnomics",
+      "rows": 4599,
+      "share_percent": 17.634879,
+      "resolved_0": 1953,
+      "resolved_1": 2646,
+      "positive_rate": 0.575342,
+      "median_input_tokens": 169.0,
+      "p95_input_tokens": 176.0,
+      "max_input_tokens": 182
+    },
+    {
+      "source": "polymarket",
+      "rows": 886,
+      "share_percent": 3.39737,
+      "resolved_0": 704,
+      "resolved_1": 182,
+      "positive_rate": 0.205418,
+      "median_input_tokens": 245.0,
+      "p95_input_tokens": 421.25,
+      "max_input_tokens": 691
+    },
+    {
+      "source": "manifold",
+      "rows": 241,
+      "share_percent": 0.924115,
+      "resolved_0": 166,
+      "resolved_1": 75,
+      "positive_rate": 0.311203,
+      "median_input_tokens": 177.0,
+      "p95_input_tokens": 530.0,
+      "max_input_tokens": 1242
+    },
+    {
+      "source": "metaculus",
+      "rows": 160,
+      "share_percent": 0.61352,
+      "resolved_0": 110,
+      "resolved_1": 50,
+      "positive_rate": 0.3125,
+      "median_input_tokens": 412.5,
+      "p95_input_tokens": 1050.3,
+      "max_input_tokens": 1750
+    },
+    {
+      "source": "infer",
+      "rows": 24,
+      "share_percent": 0.092028,
+      "resolved_0": 19,
+      "resolved_1": 5,
+      "positive_rate": 0.208333,
+      "median_input_tokens": 899.0,
+      "p95_input_tokens": 1387.6,
+      "max_input_tokens": 2441
+    }
+  ],
+  "split": {
+    "method": "date holdout, then random whole-event holdout and family-level decontamination",
+    "event_decontamination_key": [
+      "source",
+      "id"
+    ],
+    "seed": 42,
+    "rows_shuffled": true,
+    "train_rows_deduplicated": false,
+    "requested_event_eval_rows": 500,
+    "train_rows": 24932,
+    "time_eval_rows": 649,
+    "event_eval_rows": 498,
+    "train_resolved_date_range": {
+      "start": "2025-08-07",
+      "end": "2026-08-01"
+    },
+    "time_eval_resolved_date_range": {
+      "start": "2026-08-03",
+      "end": "2026-12-31"
+    },
+    "event_eval_resolved_date_range": {
+      "start": "2025-08-09",
+      "end": "2026-07-31"
+    },
+    "train_question_families": 3669,
+    "time_eval_question_families": 467,
+    "event_eval_question_families": 64,
+    "train_rows_per_question_family": {
+      "min": 1,
+      "mean": 6.795312,
+      "median": 3.0,
+      "p90": 16.0,
+      "p95": 26.0,
+      "max": 93
+    },
+    "train_event_family_overlap": 0,
+    "train_time_family_overlap": 441,
+    "time_event_family_overlap": 4,
+    "train_resolved_value_distribution": [
+      {
+        "value": 0,
+        "rows": 15551,
+        "share_percent": 62.373656
+      },
+      {
+        "value": 1,
+        "rows": 9381,
+        "share_percent": 37.626344
+      }
+    ],
+    "time_eval_resolved_value_distribution": [
+      {
+        "value": 0,
+        "rows": 339,
+        "share_percent": 52.234206
+      },
+      {
+        "value": 1,
+        "rows": 310,
+        "share_percent": 47.765794
+      }
+    ],
+    "event_eval_resolved_value_distribution": [
+      {
+        "value": 0,
+        "rows": 316,
+        "share_percent": 63.453815
+      },
+      {
+        "value": 1,
+        "rows": 182,
+        "share_percent": 36.546185
+      }
+    ]
+  },
+  "plots": {
+    "adaptive_bin_count": 20,
+    "distribution": "forecastbench_dist_cutoff_250801.png",
+    "token_lengths": "forecastbench_tokens_cutoff_250801.png"
+  }
+}

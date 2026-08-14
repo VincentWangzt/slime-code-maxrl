@@ -11,7 +11,7 @@ from forecastbench_data.pipeline import (
     OUTPUT_COLUMNS,
     add_token_lengths,
     build_dataset,
-    find_default_cutoff,
+    find_default_train_test_split_time,
     output_paths,
     split_dataset,
     write_parquet_dataset,
@@ -77,15 +77,16 @@ def test_filter_expand_deduplicate_tokenize_and_write(tmp_path: Path) -> None:
         ],
     )
 
-    build = build_dataset(raw)
+    build = build_dataset(raw, date(2024, 1, 15))
 
-    assert len(build.frame) == 4
+    assert len(build.frame) == 3
     assert build.counters["duplicate_candidate_rows_excluded"] == 1
     assert build.counters["unresolved_records_excluded"] == 1
     assert build.counters["nonbinary_resolved_records_excluded"] == 1
     market = build.frame.loc[build.frame["id"] == "market-1"].iloc[0]
     assert market["freeze_value"] == "0.2"
-    assert min(build.frame["resolved_date"]) == date(2024, 1, 10)
+    assert build.counters["resolution_records_on_or_before_cutoff_excluded"] == 1
+    assert min(build.frame["resolved_date"]) > date(2024, 1, 15)
     assert "2024-02-01" in "".join(build.frame["question"])
     assert "{resolution_date}" not in "".join(build.frame["question"])
 
@@ -105,6 +106,7 @@ def test_filter_expand_deduplicate_tokenize_and_write(tmp_path: Path) -> None:
     write_analysis_plots(
         tokenized,
         cutoff_date=date(2024, 1, 15),
+        train_test_split_time=date(2024, 1, 25),
         distribution_path=distribution_plot,
         token_path=token_plot,
         bin_count=3,
@@ -113,7 +115,7 @@ def test_filter_expand_deduplicate_tokenize_and_write(tmp_path: Path) -> None:
     assert token_plot.read_bytes().startswith(b"\x89PNG")
 
 
-def test_default_cutoff_uses_latest_date_with_more_than_minimum_later_rows() -> None:
+def test_default_train_test_split_time_uses_latest_date_with_more_than_minimum_later_rows() -> None:
     frame = pd.DataFrame(
         {
             "resolved_date": (
@@ -125,16 +127,16 @@ def test_default_cutoff_uses_latest_date_with_more_than_minimum_later_rows() -> 
         }
     )
 
-    assert find_default_cutoff(frame, minimum_eval_size=5) == date(2024, 1, 2)
+    assert find_default_train_test_split_time(frame, minimum_eval_size=5) == date(2024, 1, 2)
 
 
 def test_split_is_deterministic_time_held_out_event_held_out_and_train_decontaminated() -> None:
     frame = _split_frame()
-    first = split_dataset(frame, cutoff_date=date(2024, 1, 2), event_eval_size=5, seed=7)
-    second = split_dataset(frame, cutoff_date=date(2024, 1, 2), event_eval_size=5, seed=7)
+    first = split_dataset(frame, train_test_split_time=date(2024, 1, 2), event_eval_size=5, seed=7)
+    second = split_dataset(frame, train_test_split_time=date(2024, 1, 2), event_eval_size=5, seed=7)
 
-    assert first.cutoff_date == date(2024, 1, 2)
-    assert first.cutoff_is_automatic is False
+    assert first.train_test_split_time == date(2024, 1, 2)
+    assert first.split_time_is_automatic is False
     assert len(first.train) == 8
     assert len(first.eval_event) == 4
     assert len(first.eval_time) == 4

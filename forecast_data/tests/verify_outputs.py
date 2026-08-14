@@ -23,6 +23,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Verify generated ForecastBench Parquet artifacts.")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--cutoff-date", type=date.fromisoformat, required=True)
+    parser.add_argument("--train-test-split-time", type=date.fromisoformat, required=True)
     arguments = parser.parse_args()
 
     tag = arguments.cutoff_date.strftime("%y%m%d")
@@ -39,6 +40,7 @@ def main() -> None:
         assert str(table.schema.field("resolved_value").type) == "int8"
         assert str(table.schema.field("resolved_date").type) == "date32[day]"
         assert set(table["resolved_value"].to_pylist()) <= {0, 1}
+        assert min(table["resolved_date"].to_pylist()) > arguments.cutoff_date
         for field in ("question", "background", "source_intro"):
             assert not any(
                 "{resolution_date}" in text or "{forecast_due_date}" in text
@@ -48,9 +50,9 @@ def main() -> None:
     train = tables["train"]
     eval_time = tables["eval_time"]
     eval_event = tables["eval_event"]
-    assert max(train["resolved_date"].to_pylist()) <= arguments.cutoff_date
-    assert max(eval_event["resolved_date"].to_pylist()) <= arguments.cutoff_date
-    assert min(eval_time["resolved_date"].to_pylist()) > arguments.cutoff_date
+    assert max(train["resolved_date"].to_pylist()) <= arguments.train_test_split_time
+    assert max(eval_event["resolved_date"].to_pylist()) <= arguments.train_test_split_time
+    assert min(eval_time["resolved_date"].to_pylist()) > arguments.train_test_split_time
 
     train_rows = _row_keys(train)
     time_rows = _row_keys(eval_time)
@@ -70,6 +72,7 @@ def main() -> None:
     analysis_path = arguments.output_dir / f"forecastbench_analysis_cutoff_{tag}.json"
     analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
     assert analysis["selection"]["cutoff_date"] == arguments.cutoff_date.isoformat()
+    assert analysis["selection"]["train_test_split_time"] == arguments.train_test_split_time.isoformat()
     assert analysis["split"]["event_decontamination_key"] == ["source", "id"]
     assert analysis["split"]["train_event_family_overlap"] == 0
     assert analysis["split"]["train_rows_deduplicated"] is False
@@ -77,6 +80,20 @@ def main() -> None:
     assert analysis["split"]["time_eval_rows"] == eval_time.num_rows
     assert analysis["split"]["event_eval_rows"] == eval_event.num_rows
     assert analysis["split"]["rows_shuffled"] is True
+    assert analysis["dataset"]["rows"] == train.num_rows + eval_time.num_rows + eval_event.num_rows
+
+    all_dates = (
+        train["resolved_date"].to_pylist()
+        + eval_time["resolved_date"].to_pylist()
+        + eval_event["resolved_date"].to_pylist()
+    )
+    assert analysis["dataset"]["resolved_date_range"] == {
+        "start": min(all_dates).isoformat(),
+        "end": max(all_dates).isoformat(),
+    }
+    assert analysis["split"]["train_resolved_date_range"] == _date_range(train)
+    assert analysis["split"]["time_eval_resolved_date_range"] == _date_range(eval_time)
+    assert analysis["split"]["event_eval_resolved_date_range"] == _date_range(eval_event)
 
     for stem in ("dist", "tokens"):
         plot = arguments.output_dir / f"forecastbench_{stem}_cutoff_{tag}.png"
@@ -99,6 +116,11 @@ def _row_keys(table) -> set[tuple[str, str, str, object]]:
 
 def _question_families(table) -> set[tuple[str, str]]:
     return set(zip(table["source"].to_pylist(), table["id"].to_pylist(), strict=True))
+
+
+def _date_range(table) -> dict[str, str]:
+    values = table["resolved_date"].to_pylist()
+    return {"start": min(values).isoformat(), "end": max(values).isoformat()}
 
 
 def _is_canonically_sorted(table) -> bool:

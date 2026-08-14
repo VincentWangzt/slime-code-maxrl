@@ -19,6 +19,7 @@ def build_analysis(
     *,
     frame: pd.DataFrame,
     split: DatasetSplit,
+    cutoff_date: date,
     counters: dict[str, int],
     question_sets: tuple[str, ...],
     dedupe_keep: str,
@@ -65,10 +66,14 @@ def build_analysis(
             "question_sets": list(question_sets),
         },
         "selection": {
-            "cutoff_date": split.cutoff_date.isoformat(),
-            "cutoff_source": "automatic" if split.cutoff_is_automatic else "explicit",
-            "cutoff_rule": "resolved_date > cutoff_date goes to eval_time",
-            "automatic_cutoff_rule": (
+            "cutoff_date": cutoff_date.isoformat(),
+            "cutoff_rule": "resolved_date > cutoff_date is included",
+            "train_test_split_time": split.train_test_split_time.isoformat(),
+            "train_test_split_time_source": (
+                "automatic" if split.split_time_is_automatic else "explicit"
+            ),
+            "train_test_split_rule": "resolved_date > train_test_split_time goes to eval_time",
+            "automatic_train_test_split_rule": (
                 "latest observed resolved_date with more than minimum_time_eval_size later rows"
             ),
             "minimum_time_eval_size": minimum_time_eval_size,
@@ -83,6 +88,7 @@ def build_analysis(
             "columns": list(OUTPUT_COLUMNS),
             "sources": int(frame["source"].nunique()),
             "question_families": len(all_families),
+            "resolved_date_range": _date_range(frame),
             "missing_freeze_values": int(frame["freeze_value"].isna().sum()),
             "missing_backgrounds": int(frame["background"].map(_is_missing_text).sum()),
             "missing_source_intros": int(frame["source_intro"].map(_is_missing_text).sum()),
@@ -113,6 +119,9 @@ def build_analysis(
             "train_rows": int(len(split.train)),
             "time_eval_rows": int(len(split.eval_time)),
             "event_eval_rows": int(len(split.eval_event)),
+            "train_resolved_date_range": _date_range(split.train),
+            "time_eval_resolved_date_range": _date_range(split.eval_time),
+            "event_eval_resolved_date_range": _date_range(split.eval_event),
             "train_question_families": len(train_families),
             "time_eval_question_families": len(time_families),
             "event_eval_question_families": len(event_families),
@@ -139,8 +148,13 @@ def render_analysis(analysis: dict[str, Any], console: Console) -> None:
     summary = Table(title="ForecastBench prepared dataset")
     summary.add_column("Metric")
     summary.add_column("Value", justify="right")
-    summary.add_row("Cutoff", selection["cutoff_date"])
-    summary.add_row("Cutoff source", selection["cutoff_source"])
+    summary.add_row("Cutoff (exclusive start)", selection["cutoff_date"])
+    summary.add_row("Train-test split time", selection["train_test_split_time"])
+    summary.add_row("Split-time source", selection["train_test_split_time_source"])
+    summary.add_row(
+        "Selected date range",
+        f"{dataset['resolved_date_range']['start']} to {dataset['resolved_date_range']['end']}",
+    )
     summary.add_row("Resolved binary rows", f"{dataset['rows']:,}")
     summary.add_row("Event IDs", f"{dataset['question_families']:,}")
     summary.add_row("Train rows", f"{split['train_rows']:,}")
@@ -204,6 +218,7 @@ def write_analysis_plots(
     frame: pd.DataFrame,
     *,
     cutoff_date: date,
+    train_test_split_time: date,
     distribution_path: Path,
     token_path: Path,
     bin_count: int,
@@ -243,7 +258,18 @@ def write_analysis_plots(
         title="Resolution-date distribution",
         xlabel="Resolved date",
     )
-    axes[2].axvline(mdates.date2num(cutoff_date), color="#E45756", linestyle="--", label="cutoff")
+    axes[2].axvline(
+        mdates.date2num(cutoff_date),
+        color="#54A24B",
+        linestyle=":",
+        label="cutoff (start)",
+    )
+    axes[2].axvline(
+        mdates.date2num(train_test_split_time),
+        color="#E45756",
+        linestyle="--",
+        label="train-test split",
+    )
     locator = mdates.AutoDateLocator()
     axes[2].xaxis.set_major_locator(locator)
     axes[2].xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
@@ -375,6 +401,13 @@ def _label_distribution(frame: pd.DataFrame) -> list[dict[str, int | float]]:
 
 def _question_families(frame: pd.DataFrame) -> set[tuple[str, str]]:
     return set(zip(frame["source"], frame["id"], strict=True))
+
+
+def _date_range(frame: pd.DataFrame) -> dict[str, str]:
+    return {
+        "start": frame["resolved_date"].min().isoformat(),
+        "end": frame["resolved_date"].max().isoformat(),
+    }
 
 
 def _validate_bin_count(bin_count: int) -> None:

@@ -57,8 +57,8 @@ class BuildResult:
 
 @dataclass(frozen=True)
 class DatasetSplit:
-    cutoff_date: date
-    cutoff_is_automatic: bool
+    train_test_split_time: date
+    split_time_is_automatic: bool
     train: pd.DataFrame
     eval_time: pd.DataFrame
     eval_event: pd.DataFrame
@@ -86,8 +86,8 @@ class OutputPaths:
         )
 
 
-def build_dataset(raw_repository: Path, dedupe_keep: str = "earliest") -> BuildResult:
-    """Read all resolved binary ForecastBench question instances."""
+def build_dataset(raw_repository: Path, cutoff_date: date, dedupe_keep: str = "earliest") -> BuildResult:
+    """Read resolved binary question instances strictly after the starting cutoff."""
     _validate_dedupe_keep(dedupe_keep)
 
     datasets_directory = raw_repository / "datasets"
@@ -154,16 +154,21 @@ def build_dataset(raw_repository: Path, dedupe_keep: str = "earliest") -> BuildR
                 resolution.get("resolution_date"),
                 f"{resolution_file}:resolution_date",
             )
+            if resolved_date <= cutoff_date:
+                counters["resolution_records_on_or_before_cutoff_excluded"] += 1
+                continue
+            counters["resolution_records_after_cutoff"] += 1
+
             if resolution.get("resolved") is not True:
                 counters["unresolved_records_excluded"] += 1
                 continue
-            counters["resolved_records"] += 1
+            counters["resolved_records_after_cutoff"] += 1
 
             resolved_value = _binary_value(resolution.get("resolved_to"))
             if resolved_value is None:
                 counters["nonbinary_resolved_records_excluded"] += 1
                 continue
-            counters["binary_resolved_records"] += 1
+            counters["binary_resolved_records_after_cutoff"] += 1
 
             resolution_id = resolution.get("id")
             direction = resolution.get("direction")
@@ -193,7 +198,7 @@ def build_dataset(raw_repository: Path, dedupe_keep: str = "earliest") -> BuildR
 
     counters["joined_candidate_rows"] = len(candidates)
     if not candidates:
-        raise ValueError("No resolved binary ForecastBench rows were found")
+        raise ValueError(f"No resolved binary ForecastBench rows occur after cutoff {cutoff_date.isoformat()}")
 
     frame = pd.DataFrame.from_records(candidates)
     _validate_candidate_consistency(frame)
@@ -222,7 +227,7 @@ def add_token_lengths(frame: pd.DataFrame, tokenizer: Any, batch_size: int = 256
     return result
 
 
-def find_default_cutoff(frame: pd.DataFrame, minimum_eval_size: int = 500) -> date:
+def find_default_train_test_split_time(frame: pd.DataFrame, minimum_eval_size: int = 500) -> date:
     """Return the latest observed date with more than ``minimum_eval_size`` later rows."""
     if minimum_eval_size <= 0:
         raise ValueError(f"minimum_eval_size must be positive, got {minimum_eval_size}")
@@ -236,14 +241,14 @@ def find_default_cutoff(frame: pd.DataFrame, minimum_eval_size: int = 500) -> da
             f"No resolution date leaves more than {minimum_eval_size} later questions; "
             f"the dataset has {len(frame)} rows"
         )
-    cutoff = candidates.index.max()
-    return cutoff.date() if isinstance(cutoff, pd.Timestamp) else cutoff
+    split_time = candidates.index.max()
+    return split_time.date() if isinstance(split_time, pd.Timestamp) else split_time
 
 
 def split_dataset(
     frame: pd.DataFrame,
     *,
-    cutoff_date: date | None = None,
+    train_test_split_time: date | None = None,
     minimum_time_eval_size: int = 500,
     event_eval_size: int = 500,
     seed: int = 42,
@@ -257,12 +262,16 @@ def split_dataset(
     if not frame["resolved_value"].isin([0, 1]).all():
         raise ValueError("split_dataset requires binary resolved_value rows")
 
-    cutoff_is_automatic = cutoff_date is None
-    selected_cutoff = cutoff_date or find_default_cutoff(frame, minimum_time_eval_size)
-    eval_time = frame.loc[frame["resolved_date"] > selected_cutoff].copy()
-    historical = frame.loc[frame["resolved_date"] <= selected_cutoff].copy()
+    split_time_is_automatic = train_test_split_time is None
+    selected_split_time = train_test_split_time or find_default_train_test_split_time(
+        frame, minimum_time_eval_size
+    )
+    eval_time = frame.loc[frame["resolved_date"] > selected_split_time].copy()
+    historical = frame.loc[frame["resolved_date"] <= selected_split_time].copy()
     if eval_time.empty:
-        raise ValueError(f"No questions resolve after cutoff date {selected_cutoff.isoformat()}")
+        raise ValueError(
+            f"No questions resolve after train-test split time {selected_split_time.isoformat()}"
+        )
 
     family_sizes = historical.groupby(list(FAMILY_COLUMNS), sort=True).size().reset_index(name="rows")
     if len(family_sizes) < 2:
@@ -275,8 +284,8 @@ def split_dataset(
     train = historical.loc[~event_mask].copy()
 
     return DatasetSplit(
-        cutoff_date=selected_cutoff,
-        cutoff_is_automatic=cutoff_is_automatic,
+        train_test_split_time=selected_split_time,
+        split_time_is_automatic=split_time_is_automatic,
         train=_shuffle(train, rng),
         eval_time=_shuffle(eval_time, rng),
         eval_event=_shuffle(eval_event, rng),

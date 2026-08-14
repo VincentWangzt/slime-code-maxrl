@@ -62,13 +62,13 @@ Prepare ForecastBench locally by following `forecast_data/README.md`. Modal is o
 for the completed Parquet files, reports, and plot images. Upload one cutoff with:
 
 ```bash
-uv run --project scripts/modal modal run scripts/modal/upload_forecastbench.py --cutoff 260801
+uv run --project scripts/modal modal run scripts/modal/upload_forecastbench.py --cutoff 250801
 ```
 
 The uploader validates all seven local artifacts before connecting, then overwrites that cutoff in
 `/forecast_data/outputs/` on the `code-maxrl-slime` Volume. It performs no remote preprocessing and
-requests no Modal compute. The ForecastBench training launchers use cutoff `260801` by default; set
-`FORECASTBENCH_CUTOFF=250801` (or another uploaded `YYMMDD` tag) to select a different split.
+requests no Modal compute. The ForecastBench training launchers use starting cutoff `250801` by default; set
+`FORECASTBENCH_CUTOFF` to another uploaded `YYMMDD` tag to select a different dataset window.
 
 ## Download and convert checkpoints
 

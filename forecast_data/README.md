@@ -24,12 +24,15 @@ The processor first reads every dated question set, keeps resolved binary scalar
 placeholders, and removes repeated copies of the same question instance. The earliest copy is retained by default;
 `--dedupe-keep latest` changes only this initial repeated-instance cleanup. It then creates three datasets:
 
-1. `eval_time` contains every question with `resolved_date > cutoff_date`.
-2. If no cutoff is supplied, the cutoff is the latest observed resolution date for which strictly more than 500
-   questions remain after that date. Change the threshold with `--minimum-time-eval-size`.
-3. From questions on or before the cutoff, a seeded random ordering of whole `(source, id)` event families is held
-   out until `eval_event` is as close as possible to 500 rows. Whole families are used so an event cannot leak into
-   training. Change the target with `--event-eval-size`.
+1. `cutoff_date` is the exclusive starting boundary. Only questions with `resolved_date > cutoff_date` are
+   included. It defaults to `2025-08-01`.
+2. `train_test_split_time` is the last resolution date allowed in the historical train/event-evaluation pool.
+   `eval_time` contains every question after this boundary. By default, it is the latest observed resolution date
+   for which strictly more than 500 questions remain later; change the threshold with
+   `--minimum-time-eval-size` or set the date directly with `--train-test-split-time`.
+3. From questions on or before the train-test split time, a seeded random ordering of whole `(source, id)` event
+   families is held out until `eval_event` is as close as possible to 500 rows. Whole families are used so an
+   event cannot leak into training. Change the target with `--event-eval-size`.
 4. `train` contains every historical question row whose `(source, id)` family was not selected for `eval_event`.
    Repeated IDs remain in training; `(source, id)` is a decontamination key, not a training-row deduplication key.
 
@@ -57,16 +60,18 @@ uv run --project forecast_data forecastbench-data download \
   --refresh
 ```
 
-Prepare the data with the automatic cutoff:
+Prepare with the default `2025-08-01` cutoff and an automatic train-test split time:
 
 ```bash
 uv run --project forecast_data forecastbench-data process
 ```
 
-Or choose an explicit cutoff:
+Or choose both boundaries explicitly:
 
 ```bash
-uv run --project forecast_data forecastbench-data process --cutoff-date 2025-08-01
+uv run --project forecast_data forecastbench-data process \
+  --cutoff-date 2025-08-01 \
+  --train-test-split-time 2026-08-01
 ```
 
 The CLI also accepts `--raw-dir`, `--output-dir`, `--minimum-time-eval-size`, `--event-eval-size`, `--seed`,
@@ -77,7 +82,8 @@ live in `forecast_data/outputs/`.
 
 ## Outputs and plots
 
-The cutoff is encoded as `YYMMDD`. For `2025-08-01`, the files are:
+Only the starting cutoff is encoded as `YYMMDD`; the train-test split time is recorded in Parquet metadata and the
+analysis. For cutoff `2025-08-01`, the files are:
 
 ```text
 forecastbench_train_cutoff_250801.parquet
@@ -114,12 +120,13 @@ artifacts:
 
 ```bash
 uv sync --project scripts/modal --locked
-uv run --project scripts/modal modal run scripts/modal/upload_forecastbench.py --cutoff 260801
+uv run --project scripts/modal modal run scripts/modal/upload_forecastbench.py --cutoff 250801
 ```
 
-The pinned snapshot currently selects `2026-08-01` (`260801`) automatically. The upload goes to
-`/forecast_data/outputs/` in the `code-maxrl-slime` Volume. Set `FORECASTBENCH_CUTOFF` when launching a training
-example if a different uploaded cutoff should be used.
+For the pinned snapshot, cutoff `2025-08-01` selects resolved dates from `2025-08-07` through `2026-12-31`, and the
+automatic train-test split time is `2026-08-01`. The upload goes to `/forecast_data/outputs/` in the
+`code-maxrl-slime` Volume. Set `FORECASTBENCH_CUTOFF` when launching a training example if a different starting
+cutoff should be used.
 
 The raw data is distributed by the Forecasting Research Institute under CC BY-SA 4.0; its upstream `LICENSE` is
 preserved in the downloaded snapshot.
