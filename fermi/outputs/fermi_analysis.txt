@@ -1,0 +1,188 @@
+Fermi merged dataset analysis
+=============================
+
+Configuration
+-------------
+Tokenizer: Qwen/Qwen3-0.6B (no special tokens)
+Per-source row split target: train=0.800, val=0.100, test=0.100
+Split seed: 42
+Split procedure: pool published splits, independently shuffle each dataset source, apportion 8:1:1, concatenate
+Deduplication key: Unicode NFKC + case-folding + whitespace collapsing of question text
+AllenAI revision: dfd4ceec41ef5fa0fe63e24c6027f13730d39a36
+Open Scioly revision: dea8a2595651160d4f247f8a47ad9ca4aa2ceeee
+
+Pinned AllenAI input counts before pooling
+------------------------------------------
+problem_source split  rows
+        RealFP train   185
+        RealFP   val   125
+        RealFP  test   557
+       SynthFP train  8000
+       SynthFP   val  1000
+       SynthFP  test  1000
+
+Fermi-Eval deduplication
+------------------------
+Raw rows: 4,008
+Rows after internal deduplication: 3,871
+Internal duplicate rows removed: 137
+Duplicate question groups with conflicting exponents: 4
+Rows overlapping AllenAI questions removed: 1
+Rows after all deduplication: 3,870
+Unit-required-but-unspecified rows excluded: 137
+Rows retained in decontaminated merge input: 3,733
+Olympiad source groups: 627
+Rows without a recoverable question number: 19
+
+Fermi-Eval answer-unit audit
+----------------------------
+The source stores only exponent K, so every Fermi-Eval answer_unit is empty.
+Taxonomy: explicit output scale; inherent count/dimensionless answer; or required but unspecified unit.
+Classifications are rule-based question-text audit results, not ground truth; confidence and review flags are retained.
+Science Olympiad rules describe separate answer sheets with identifying units; missing units here may have been lost
+when original tests were reduced to data.js rather than omitted by the original problem author.
+The audit does not silently fill answer_unit in the training Parquets.
+Rows classified as unit_required_but_unspecified are retained in the audit artifact but excluded from merging.
+               classification  rows  share_percent  needs_manual_review
+      explicit_unit_specified  1460          37.73                  153
+              unit_not_needed  2273          58.73                  619
+unit_required_but_unspecified   137           3.54                  137
+
+Audit confidence by classification
+               classification confidence  rows
+      explicit_unit_specified       high  1319
+              unit_not_needed       high  1665
+              unit_not_needed     medium   608
+      explicit_unit_specified     medium   141
+unit_required_but_unspecified     medium    42
+unit_required_but_unspecified        low    22
+unit_required_but_unspecified       high    73
+
+Most common explicitly requested Fermi-Eval units
+             requested_unit  rows
+                    seconds    98
+                     meters    58
+                      hours    57
+                    dollars    44
+                      grams    44
+                     pounds    41
+                      years    35
+                     joules    34
+                      miles    33
+                    gallons    31
+                    minutes    30
+                       days    30
+                    newtons    28
+                    percent    27
+                     liters    23
+                         kg    20
+                        usd    17
+                   calories    17
+si unit for target quantity    17
+                millimeters    15
+
+Examples whose output unit is required but unspecified
+                                                                                                                                                                                                                                                                                                                                     question                                                       problem_source confidence
+                                                                                  Before joining BirdSO, πgeon lived in NYC, the world’s foremost destination for pigeons (source needed). If all the pigeons in NYC formed Science Olympiad teams to compete at BirdSO, how much would BirdSO receive in registration fees from the pigeons?                Fermi-Eval | BirdSO In-Person Invitational 23-24 | Q8     medium
+Suppose you have a list of the numbers 1 through 120, and you randomly mix them up and put them in a list. You try to sort them as follows: take the list, uniformly at random permute the elements, and check if it’s sorted. If it’s still not sorted, then repeated. On average, many attempts should it take for you to sort the numbers?               Fermi-Eval | BirdSO In-Person Invitational 23-24 | Q52        low
+                                                                                                                                                                                                                                                                        Assuming notes actually get that high, what is the frequency of E300?                     Fermi-Eval | BirdSO Mini Invitational 21-22 | Q1       high
+                                                                                                                                                                                                                                       What is the 100-volume in (beard seconds)^100 of a 100-dimensional hypersphere with radius 1 angstrom?                    Fermi-Eval | BirdSO Mini Invitational 21-22 | Q49       high
+                                                                                                                  Take the density of the observable universe to be approximately 6 protons/m3 . Find the radius of a Schwarzschild black hole such that the density of the black hole is the same as the density of the observable universe.                    Fermi-Eval | BirdSO Mini Invitational 21-22 | Q51       high
+                                                                                                                                                                                                                                                                                                                                      DISCARD                    Fermi-Eval | BirdSO Mini Invitational 21-22 | Q53        low
+                      In the video game Stardew Valley, one cup of coffee costs 300g (g is the in-game currency). Buying three coffees in the game allows you to cook a Triple-Shot Espresso, which sells for 450g. If you were to convert the United States’ yearly coffee consumption into Triple-Shot Espresso, how much g would you lose?               Fermi-Eval | BirdSO Satellite Invitational 21-22 | Q55     medium
+                                                                                                                                                                                                         If all of the energy from a type Ia supernova was pumped into the ice in Antarctica, what would be the final temperature of the ice?               Fermi-Eval | BirdSO Satellite Invitational 21-22 | Q59       high
+                                                                                                                                                       If I created a baseball-sized lump of alpha particles and they traveled together at their normal speed, what would be their kinetic energy? Assume they are perfectly packed together. Fermi-Eval | FermiSweat, Fermi Questions, but butter (chicken) | Q42       high
+                                                                                                                                                                                                                                                            What is the voltage necessary to move a single electron through a 670 Ω resistor?                     Fermi-Eval | Captains Tryouts Carmel 17-18 | Q25       high
+
+Examples from each unit class
+               classification confidence specified_unit                                                                                                                                                                                                                                                                                                                                      question
+      explicit_unit_specified       high    nanoseconds                                                                                                                                                                                                                                                                                   How many nanoseconds did it take you to read this sentence?
+      explicit_unit_specified       high          years                                                                                                                                                                                                                                                  How many years would it take to walk from the SF Bay in California . . . to New York Island?
+      explicit_unit_specified       high         meters                                                                                                                                                                                                                                                                                                    What is the distance to the sun in meters?
+              unit_not_needed       high                                                                                                                                                                                                                                                                                                                             Compute (Larry Bird’s Jersey #)^
+              unit_not_needed     medium                                                                                                                                                                                                           How many Sonic Chili Dogs (Chili Cheese Coney) would Klebb have to eat in order to replenish all the calories he burned while walking to New York?
+              unit_not_needed       high                                                                                                                                                                                                                                                                                                         How many words are on the Wikipedia page for “Bird”?
+unit_required_but_unspecified     medium                                                                                                  Before joining BirdSO, πgeon lived in NYC, the world’s foremost destination for pigeons (source needed). If all the pigeons in NYC formed Science Olympiad teams to compete at BirdSO, how much would BirdSO receive in registration fees from the pigeons?
+unit_required_but_unspecified        low                Suppose you have a list of the numbers 1 through 120, and you randomly mix them up and put them in a list. You try to sort them as follows: take the list, uniformly at random permute the elements, and check if it’s sorted. If it’s still not sorted, then repeated. On average, many attempts should it take for you to sort the numbers?
+unit_required_but_unspecified       high                                                                                                                                                                                                                                                                                        Assuming notes actually get that high, what is the frequency of E300?
+
+Per-source resplit and final sample counts
+------------------------------------------
+split problem_source  rows
+train        SynthFP  8000
+train         RealFP   693
+train     Fermi-Eval  2987
+train          TOTAL 11680
+  val        SynthFP  1000
+  val         RealFP    87
+  val     Fermi-Eval   373
+  val          TOTAL  1460
+ test        SynthFP  1000
+ test         RealFP    87
+ test     Fermi-Eval   373
+ test          TOTAL  1460
+
+Token lengths by split and field
+--------------------------------
+split        field   mean  median   p95  max
+train     question  20.30    17.0  39.0  287
+train answer_value   9.45    12.0  12.0   22
+train  answer_unit   0.24     0.0   1.0   11
+train      program 103.77   112.0 189.0  396
+train      context  50.76    55.0  90.0  123
+train       record 197.56   211.0 328.0  553
+  val     question  20.19    17.0  37.0  355
+  val answer_value   9.45    12.0  12.0   15
+  val  answer_unit   0.24     0.0   1.0   10
+  val      program 103.91   112.0 189.0  297
+  val      context  50.56    55.0  90.0  108
+  val       record 197.40   210.0 328.0  433
+ test     question  19.85    17.0  36.0  165
+ test answer_value   9.45    12.0  12.0   14
+ test  answer_unit   0.23     0.0   1.0    9
+ test      program 104.47   112.0 190.0  311
+ test      context  51.17    55.0  90.0  104
+ test       record 198.23   212.0 329.0  437
+
+Answer log10(abs(value)) statistics
+------------------------------------
+Zero or unparsable answers are reported as undefined and excluded from numeric summaries.
+split problem_source  rows  undefined          mean          std           min   p25  median    p75          max
+train        SynthFP  8000          0  5.320000e+00 6.177000e+00 -1.787600e+01 1.388   3.243  8.115       39.150
+train         RealFP   693          0  5.810000e+00 7.588000e+00 -2.918700e+01 1.857   4.813  8.230       59.491
+train     Fermi-Eval  2987          0 -2.123811e+15 1.160542e+17 -6.343822e+18 3.000   7.000 12.000 22228104.000
+train            ALL 11680          0 -5.431355e+14 5.869634e+16 -6.343822e+18 1.515   4.000  9.163 22228104.000
+  val        SynthFP  1000          0  5.394000e+00 6.214000e+00 -1.327400e+01 1.375   3.159  8.545       34.988
+  val         RealFP    87          0  5.658000e+00 1.134300e+01 -2.492100e+01 2.011   4.003  6.913       90.301
+  val     Fermi-Eval   373          0  6.538600e+01 7.899430e+02 -8.300000e+01 3.000   7.000 12.000    14889.000
+  val            ALL  1460          0  2.073600e+01 4.001750e+02 -8.300000e+01 1.516   4.000  9.482    14889.000
+ test        SynthFP  1000          0  5.256000e+00 5.958000e+00 -1.048600e+01 1.324   3.033  8.276       32.257
+ test         RealFP    87          1  5.602000e+00 7.963000e+00 -1.500000e+01 1.554   3.818  8.273       43.348
+ test     Fermi-Eval   373          0  5.920778e+04 1.082940e+06 -3.550000e+02 2.000   6.000 12.000 20920074.000
+ test            ALL  1460          1  1.514067e+04 5.481678e+05 -3.550000e+02 1.398   4.000  9.007 20920074.000
+
+Overall answer-log distribution (central 99% in 20 equal-width bins)
+--------------------------------------------------------------------
+             range  rows
+   (-inf, -21.000)    72
+[-21.000, -14.250)    40
+ [-14.250, -7.500)   153
+  [-7.500, -0.750)   598
+   [-0.750, 6.000)  8135
+   [6.000, 12.750)  3482
+  [12.750, 19.500)  1219
+  [19.500, 26.250)   464
+  [26.250, 33.000)   189
+  [33.000, 39.750)    62
+  [39.750, 46.500)    33
+  [46.500, 53.250)    22
+  [53.250, 60.000)    10
+  [60.000, 66.750)     9
+  [66.750, 73.500)     6
+  [73.500, 80.250)     6
+  [80.250, 87.000)     6
+  [87.000, 93.750)    10
+ [93.750, 100.500)     4
+[100.500, 107.250)     1
+[107.250, 114.000)     5
+   (114.050, +inf)    73

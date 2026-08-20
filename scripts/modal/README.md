@@ -70,6 +70,19 @@ The uploader validates all six local artifacts before connecting, then overwrite
 requests no Modal compute. The ForecastBench training launchers use starting cutoff `250801` by default; set
 `FORECASTBENCH_CUTOFF` to another uploaded `YYMMDD` tag to select a different dataset window.
 
+## Upload Fermi artifacts
+
+Prepare the merged Fermi datasets locally by following `fermi/README.md`. Upload the three Parquet files and their
+analysis artifacts with:
+
+```bash
+uv run --project scripts/modal modal run scripts/modal/upload_fermi.py
+```
+
+The uploader validates all eight local artifacts, including the complete Fermi-Eval audit and the merge-ready
+decontaminated Fermi-Eval Parquets, then overwrites them in `/fermi/outputs/` on the `code-maxrl-slime` Volume. It
+performs no remote preprocessing and requests no Modal compute.
+
 ## Download and convert checkpoints
 
 Choose persistent paths under `/data`; they are inputs supplied to the command runner, not defaults encoded in the Modal adapter. For the Qwen2.5-0.5B example, download the Hugging Face checkpoint:

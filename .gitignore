@@ -198,3 +198,7 @@ _examples_synced/
 /forecast_data/raw/
 !/forecast_data/outputs/
 !/forecast_data/outputs/**
+
+# Fermi source and tokenizer cache; keep generated artifacts
+!/fermi/outputs/
+!/fermi/outputs/**
