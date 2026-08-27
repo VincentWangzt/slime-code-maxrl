@@ -1,5 +1,10 @@
 # Slime on Modal
 
+> [!WARNING]
+> **OUTDATED — retained only for historical reference.** Modal is no longer the supported runtime for this fork.
+> Run all Python commands, tests, checkpoint conversions, and experiments in Docker on `cmu-L40-live` using the
+> local server wrappers described in the repository's untracked `AGENTS.md`.
+
 These entrypoints run Slime in one ephemeral Modal container. Each invocation requests one physical
 H100/H200 node, starts a fresh Ray head inside that container, waits for the Ray job, and exits. Only
 the `code-maxrl-slime` Volume persists.
