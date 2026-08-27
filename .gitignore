@@ -193,6 +193,7 @@ glm/
 _examples_synced/
 .env
 .DS_Store
+/AGENTS.md
 
 # ForecastBench source snapshots
 /forecast_data/raw/
