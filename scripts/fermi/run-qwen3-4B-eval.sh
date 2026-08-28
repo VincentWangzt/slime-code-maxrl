@@ -75,7 +75,7 @@ ROLLOUT_ARGS=(
    --n-samples-per-prompt 1
    --num-steps-per-rollout 1
    --rollout-max-prompt-len 2048
-   --rollout-max-response-len 2048
+   --rollout-max-response-len 8192
    --rollout-temperature 0
    --rollout-top-p 1
 )
@@ -88,7 +88,7 @@ EVAL_ARGS=(
    --eval-label-key log10_answer
    --n-samples-per-eval-prompt 1
    --eval-max-prompt-len 2048
-   --eval-max-response-len 2048
+   --eval-max-response-len 8192
    --eval-temperature 0
    --eval-top-p 1
    --eval-interval 1
@@ -143,7 +143,7 @@ SGLANG_ARGS=(
    --rollout-num-gpus-per-engine 2
    --sglang-mem-fraction-static 0.7
    # This limit is per engine; Slime multiplies it by the engine count.
-   --sglang-server-concurrency 128
+   --sglang-server-concurrency 32
 )
 
 MISC_ARGS=(
