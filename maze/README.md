@@ -45,6 +45,23 @@ its own algorithm arguments and logs to Weights & Biases by default.
 ./run-experiment.sh --gpus <id> -- bash scripts/maze/run-rloo.sh
 ```
 
+`run-sft.sh` is a fixed production protocol based on the upstream SFT setup,
+with the requested longer training run: 2,500 optimizer steps, global batch
+size 32, AdamW at a constant `5e-4` learning rate, no warmup, gradient clipping
+at 1.0, and checkpoints every 500 steps. Every 50 steps it computes the
+held-out response-token loss with Megatron and then asks SGLang for eight
+generations per held-out prompt. The generation pass logs unbiased pass@k and
+optimal-pass@k for `k = 1, 2, 4, 8`. There is no redundant evaluation before
+the first optimizer step. The launcher always enables generative evaluation,
+colocation, an 8,192-request SGLang concurrency limit, and a 65,536 soft
+open-file limit.
+
+The SFT launcher accepts no configuration arguments and does not read training
+or evaluation behavior from environment variables. Run it directly through
+`run-experiment.sh`; wrapper-provided GPU metadata and credentials are the only
+runtime inputs. All maze training launchers reject execution outside an
+experiment-wrapper container.
+
 `run-experiment.sh` starts a retained, detached container. Before launching a
 dependent stage, use the printed `docker wait` and `docker inspect` commands to
 confirm that the preceding container exited with status zero.
@@ -55,11 +72,11 @@ estimator. GRPO uses group-normalized binary rewards. RLOO uses the exact
 leave-one-out baseline added for this task. The RL launchers default to 128
 samples per prompt and a global batch of 256, matching the upstream setup.
 
-Useful overrides include `WANDB_PROJECT`, `WANDB_TEAM`, `WANDB_MODE`,
-`RUN_NAME`, `NUM_ROLLOUT`, `ROLLOUT_BATCH_SIZE`, `N_SAMPLES`, `LR`, and
-`SAVE_CHECKPOINT`. Set `WANDB_MODE=offline` for smoke validation without a
-networked W&B run. RL launchers reset optimizer, RNG, and rollout counters when
-starting from `SFT_CHECKPOINT`. To resume an RL run, set
+The RL launchers retain overrides including `WANDB_PROJECT`, `WANDB_TEAM`,
+`WANDB_MODE`, `RUN_NAME`, `NUM_ROLLOUT`, `ROLLOUT_BATCH_SIZE`, `N_SAMPLES`,
+`LR`, and `SAVE_CHECKPOINT`. Set `WANDB_MODE=offline` for RL smoke validation
+without a networked W&B run. RL launchers reset optimizer, RNG, and rollout
+counters when starting from `SFT_CHECKPOINT`. To resume an RL run, set
 `LOAD_CHECKPOINT=$SAVE_CHECKPOINT RESET_TRAINING_STATE=0`.
 
 ## Evaluate
@@ -74,23 +91,23 @@ EVAL_CHECKPOINT=/data/runs/maze/maxrl \
 ```
 
 Reports are written below `/data/runs/maze/eval` by default. Periodic
-evaluation in each RL launcher uses the same 1,024-generation protocol.
+evaluation in each RL launcher uses the same 1,024-generation protocol. The
+smaller eight-generation protocol applies only to the evaluation integrated
+into SFT.
 
-## One-step validation
+## RL one-step validation
 
-The following reduced runs exercise one optimizer step while retaining the
-same Slime paths. Use distinct output directories so a smoke run cannot
-overwrite a real checkpoint:
+The production SFT script is intentionally fixed and cannot be shortened into
+a smoke run with environment variables. The following reduced RL run exercises
+one optimizer step; use distinct output directories so it cannot overwrite a
+real checkpoint:
 
 ```bash
-WANDB_MODE=offline NUM_ROLLOUT=1 SFT_BATCH_SIZE=2 \
-  SFT_CHECKPOINT=/data/runs/maze/smoke-sft \
-  ./run-experiment.sh --gpus <id> -- bash scripts/maze/run-sft.sh
-
-WANDB_MODE=offline NUM_ROLLOUT=1 ENABLE_EVAL=0 N_SAMPLES=2 \
+./run-experiment.sh --gpus <id> -- env \
+  WANDB_MODE=offline NUM_ROLLOUT=1 ENABLE_EVAL=0 N_SAMPLES=2 \
   ROLLOUT_BATCH_SIZE=1 SFT_CHECKPOINT=/data/runs/maze/smoke-sft \
   MAXRL_DEGREE=2 SAVE_CHECKPOINT=/data/runs/maze/smoke-maxrl \
-  ./run-experiment.sh --gpus <id> -- bash scripts/maze/run-maxrl.sh
+  bash scripts/maze/run-maxrl.sh
 ```
 
 `run-grpo.sh` and `run-rloo.sh` accept the same two-sample smoke settings

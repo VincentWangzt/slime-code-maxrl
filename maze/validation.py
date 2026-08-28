@@ -18,6 +18,7 @@ from maze.constants import ACTION_DELTAS, MAZE_TOKEN_BY_ID
 logger = logging.getLogger(__name__)
 
 PASS_AT_K_VALUES = (1, 4, 16, 64, 256, 1024)
+SFT_PASS_AT_K_VALUES = (1, 2, 4, 8)
 _ALLOWED_TRAILING_TOKENS = frozenset({"<eos>", "<pad>"})
 
 
@@ -272,13 +273,15 @@ def _write_eval_report(args: Any, rollout_id: int, report: dict[str, Any]) -> No
     os.replace(temporary, destination)
 
 
-def log_eval_metrics(
+def _log_eval_metrics(
     rollout_id: int,
     args: Any,
     data: dict[str, dict[str, Any]],
     log_dict: dict[str, Any],
+    *,
+    pass_at_k_values: tuple[int, ...],
+    required_sample_count: int,
 ) -> bool:
-    """Report pass@{1,4,16,64,256,1024} from 1024 generations per prompt."""
     reports: dict[str, Any] = {}
     for dataset_name, dataset_info in data.items():
         samples = dataset_info.get("samples")
@@ -286,7 +289,6 @@ def log_eval_metrics(
             raise ValueError(f"Maze eval dataset {dataset_name!r} has no samples.")
         groups = _group_eval_samples(samples)
         sample_count = len(groups[0])
-        required_sample_count = max(PASS_AT_K_VALUES)
         if sample_count != required_sample_count:
             raise ValueError(
                 f"Maze evaluation needs exactly {required_sample_count} generations per prompt; "
@@ -304,7 +306,7 @@ def log_eval_metrics(
                 reasons[item["reason"]] += 1
 
         dataset_metrics: dict[str, float] = {}
-        for k in PASS_AT_K_VALUES:
+        for k in pass_at_k_values:
             dataset_metrics[f"pass@{k}"] = sum(
                 estimate_pass_at_k(num_samples=sample_count, num_correct=count, k=k)
                 for count in success_counts
@@ -330,3 +332,37 @@ def log_eval_metrics(
 
     _write_eval_report(args, rollout_id, {"rollout_id": rollout_id, "datasets": reports})
     return False
+
+
+def log_eval_metrics(
+    rollout_id: int,
+    args: Any,
+    data: dict[str, dict[str, Any]],
+    log_dict: dict[str, Any],
+) -> bool:
+    """Report the full pass@k suite from 1024 generations per prompt."""
+    return _log_eval_metrics(
+        rollout_id,
+        args,
+        data,
+        log_dict,
+        pass_at_k_values=PASS_AT_K_VALUES,
+        required_sample_count=1024,
+    )
+
+
+def log_sft_eval_metrics(
+    rollout_id: int,
+    args: Any,
+    data: dict[str, dict[str, Any]],
+    log_dict: dict[str, Any],
+) -> bool:
+    """Report the original SFT-style pass@{1,2,4,8} from eight generations."""
+    return _log_eval_metrics(
+        rollout_id,
+        args,
+        data,
+        log_dict,
+        pass_at_k_values=SFT_PASS_AT_K_VALUES,
+        required_sample_count=8,
+    )

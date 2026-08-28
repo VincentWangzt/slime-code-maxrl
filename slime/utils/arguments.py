@@ -826,6 +826,15 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                 ),
             )
             parser.add_argument(
+                "--eval-sft-loss",
+                action="store_true",
+                default=False,
+                help=(
+                    "Before generation evaluation, compute held-out response-token loss with the "
+                    "Megatron actor and the configured training rollout preprocessing."
+                ),
+            )
+            parser.add_argument(
                 "--sample-save-dir",
                 type=str,
                 default=None,
@@ -1935,6 +1944,17 @@ def _validate_regression_args(args) -> None:
         raise ValueError("Scalar regression does not use a PPO critic; choose a non-PPO advantage estimator.")
 
 
+def _validate_sft_eval_args(args) -> None:
+    if not args.eval_sft_loss:
+        return
+    if args.loss_type != "sft_loss":
+        raise ValueError("--eval-sft-loss requires --loss-type sft_loss.")
+    if args.train_backend != "megatron":
+        raise ValueError("--eval-sft-loss requires --train-backend megatron.")
+    if args.eval_interval is None:
+        raise ValueError("--eval-sft-loss requires --eval-interval.")
+
+
 def _resolve_bridge_load_path(load: str | None, ref_load: str | None, hf_checkpoint: str) -> str:
     """Use an existing configured checkpoint, otherwise fall back to the initial model."""
     if load is not None and os.path.isdir(load):
@@ -2206,6 +2226,7 @@ def slime_validate_args(args):
     _validate_maxrl_args(args)
     _validate_rloo_args(args)
     _validate_regression_args(args)
+    _validate_sft_eval_args(args)
 
     if args.eval_max_context_len is None:
         logger.info(

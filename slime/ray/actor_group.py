@@ -165,6 +165,23 @@ class RayTrainGroup:
             indexed_predictions.extend(zip(indices, predictions, strict=True))
         return indexed_predictions
 
+    def evaluate_sft_loss(self, rollout_data_ref) -> dict[str, float | int]:
+        """Aggregate held-out response-token NLL across DP workers."""
+        worker_outputs = ray.get(
+            [actor.evaluate_sft_loss.remote(rollout_data_ref) for actor in self._actor_handlers]
+        )
+        negative_log_likelihood = sum(
+            float(output.get("negative_log_likelihood", 0.0)) for output in worker_outputs
+        )
+        num_loss_tokens = sum(int(output.get("num_loss_tokens", 0)) for output in worker_outputs)
+        if num_loss_tokens <= 0:
+            raise ValueError("SFT evaluation did not produce any loss-bearing response tokens.")
+        return {
+            "loss": negative_log_likelihood / num_loss_tokens,
+            "negative_log_likelihood": negative_log_likelihood,
+            "num_loss_tokens": num_loss_tokens,
+        }
+
     def save_model(self, rollout_id, force_sync=False):
         """Save actor model"""
         ret = ray.get([actor.save_model.remote(rollout_id, force_sync=force_sync) for actor in self._actor_handlers])

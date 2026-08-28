@@ -20,6 +20,12 @@ class _RolloutManager:
         self.prepare_regression_eval = _RemoteMethod(
             lambda rollout_id: (events.append(("prepare_regression_eval", rollout_id)), "eval-data")[1]
         )
+        self.prepare_sft_loss_eval = _RemoteMethod(
+            lambda rollout_id: (
+                events.append(("prepare_sft_loss_eval", rollout_id)),
+                {"Maze": "sft-eval-data"},
+            )[1]
+        )
         self.finish_regression_eval = _RemoteMethod(
             lambda rollout_id, predictions: events.append(("finish_regression_eval", rollout_id, predictions))
         )
@@ -45,6 +51,15 @@ class _ActorModel:
         assert rollout_data_ref == "eval-data"
         self._events.append(("predict_regression", None))
         return [(0, 1.5)]
+
+    def evaluate_sft_loss(self, rollout_data_ref):
+        assert rollout_data_ref == "sft-eval-data"
+        self._events.append(("evaluate_sft_loss", None))
+        return {
+            "loss": 0.75,
+            "negative_log_likelihood": 6.0,
+            "num_loss_tokens": 8,
+        }
 
 
 def _run_train(
@@ -75,6 +90,13 @@ def _run_train(
         colocate=False,
         update_weights_interval=1000,
         loss_type=loss_type,
+        eval_sft_loss=loss_type == "sft_loss",
+        rollout_batch_size=1,
+        n_samples_per_prompt=1,
+        global_batch_size=1,
+        wandb_always_use_train_step=False,
+        use_wandb=False,
+        use_tensorboard=False,
     )
 
     monkeypatch.setattr(train_module_under_test, "configure_logger", lambda: None)
@@ -177,3 +199,41 @@ def test_regression_periodic_eval_dispatches_through_megatron(monkeypatch, train
     assert ("prepare_regression_eval", 19) in events
     assert ("finish_regression_eval", 19, [(0, 1.5)]) in events
     assert events.index(("train", 19)) < events.index(("prepare_regression_eval", 19))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("train_module_under_test", [train_module, train_async_module])
+def test_sft_startup_eval_runs_loss_then_generation(monkeypatch, train_module_under_test):
+    events = _run_train(
+        monkeypatch,
+        train_module_under_test,
+        start_rollout_id=0,
+        num_rollout=1,
+        loss_type="sft_loss",
+    )
+
+    assert ("prepare_sft_loss_eval", 0) in events
+    assert ("evaluate_sft_loss", None) in events
+    assert ("eval", 0) in events
+    assert events.index(("prepare_sft_loss_eval", 0)) < events.index(("evaluate_sft_loss", None))
+    assert events.index(("evaluate_sft_loss", None)) < events.index(("eval", 0))
+    assert events.index(("eval", 0)) < events.index(("generate", 0))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("train_module_under_test", [train_module, train_async_module])
+def test_sft_periodic_eval_runs_after_training(monkeypatch, train_module_under_test):
+    events = _run_train(
+        monkeypatch,
+        train_module_under_test,
+        start_rollout_id=19,
+        num_rollout=20,
+        skip_eval_before_train=True,
+        loss_type="sft_loss",
+    )
+
+    assert ("prepare_sft_loss_eval", 19) in events
+    assert ("evaluate_sft_loss", None) in events
+    assert ("eval", 19) in events
+    assert events.index(("train", 19)) < events.index(("prepare_sft_loss_eval", 19))
+    assert events.index(("evaluate_sft_loss", None)) < events.index(("eval", 19))

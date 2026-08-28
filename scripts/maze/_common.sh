@@ -13,9 +13,14 @@ cd "${REPO_ROOT}"
 
 export PYTHONUNBUFFERED=1
 
-NUM_GPUS="${NUM_GPUS:-${SLIME_GPU_COUNT:-}}"
+if [[ -z "${SLIME_RUN_ID:-}" || -z "${SLIME_RUN_DIR:-}" ]]; then
+   echo "Maze launchers must run inside a container created by run-experiment.sh." >&2
+   exit 2
+fi
+
+NUM_GPUS="${SLIME_GPU_COUNT:-}"
 if ! [[ "${NUM_GPUS}" =~ ^[1-9][0-9]*$ ]]; then
-   echo "NUM_GPUS must be the positive visible-GPU count. Launch through run-experiment.sh with explicit host GPU IDs." >&2
+   echo "SLIME_GPU_COUNT must be a positive integer supplied by run-experiment.sh." >&2
    exit 2
 fi
 

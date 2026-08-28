@@ -402,6 +402,54 @@ class MegatronTrainRayActor(TrainRayActor):
             self.sleep()
         return result
 
+    def evaluate_sft_loss(self, rollout_data_ref: Box) -> dict[str, float | int]:
+        """Return response-token NLL totals for this worker's held-out partition."""
+        if self.args.loss_type != "sft_loss" or self.role != "actor":
+            raise ValueError("evaluate_sft_loss requires an SFT actor.")
+        if self.args.offload_train:
+            self.wake_up()
+        rollout_data = self._get_rollout_data(rollout_data_ref)
+        data_iterator = get_data_iterator(rollout_data)
+        output = forward_only(
+            get_log_probs_and_entropy,
+            self.args,
+            self.model,
+            data_iterator,
+            rollout_data["num_microbatches"],
+        )
+        result: dict[str, float | int] = {}
+        if (
+            mpu.is_pipeline_last_stage()
+            and mpu.get_tensor_model_parallel_rank() == 0
+            and mpu.get_context_parallel_rank() == 0
+        ):
+            log_probs = output.get("log_probs", [])
+            loss_masks = rollout_data["loss_masks"]
+            if len(log_probs) != len(loss_masks):
+                raise ValueError(
+                    f"SFT eval returned {len(log_probs)} log-prob sequences for "
+                    f"{len(loss_masks)} loss masks."
+                )
+            negative_log_likelihood = 0.0
+            num_loss_tokens = 0
+            for sample_log_probs, sample_loss_mask in zip(log_probs, loss_masks, strict=True):
+                if sample_log_probs.numel() != sample_loss_mask.numel():
+                    raise ValueError(
+                        "SFT eval response log-prob and loss-mask lengths differ: "
+                        f"{sample_log_probs.numel()} != {sample_loss_mask.numel()}."
+                    )
+                mask = sample_loss_mask.to(device=sample_log_probs.device, dtype=sample_log_probs.dtype)
+                negative_log_likelihood -= float((sample_log_probs * mask).sum().item())
+                num_loss_tokens += int(mask.sum().item())
+            result = {
+                "negative_log_likelihood": negative_log_likelihood,
+                "num_loss_tokens": num_loss_tokens,
+            }
+        if self.args.offload_train:
+            del rollout_data
+            self.sleep()
+        return result
+
     def train(self, rollout_id: int, rollout_data_ref: Box, external_data=None):
         if self.args.debug_rollout_only:
             return None

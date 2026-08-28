@@ -209,6 +209,7 @@ def make_slime_validate_args(**overrides):
         finetune=False,
         start_rollout_id=None,
         eval_interval=None,
+        eval_sft_loss=False,
         save_interval=None,
         save=None,
         kl_loss_coef=0,
@@ -487,6 +488,42 @@ def test_regression_argument_contract_rejects_incompatible_modes(monkeypatch, ov
 
 
 @pytest.mark.unit
+def test_sft_loss_evaluation_accepts_megatron_sft_mode(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    args = make_slime_validate_args(
+        eval_sft_loss=True,
+        eval_interval=25,
+        loss_type="sft_loss",
+        train_backend="megatron",
+    )
+
+    module._validate_sft_eval_args(args)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"loss_type": "policy_loss"}, "loss-type sft_loss"),
+        ({"train_backend": "deepspeed"}, "train-backend megatron"),
+        ({"eval_interval": None}, "eval-interval"),
+    ],
+)
+def test_sft_loss_evaluation_rejects_incompatible_modes(monkeypatch, overrides, message):
+    module = load_slime_arguments_module(monkeypatch)
+    values = {
+        "eval_sft_loss": True,
+        "eval_interval": 25,
+        "loss_type": "sft_loss",
+        "train_backend": "megatron",
+        **overrides,
+    }
+
+    with pytest.raises(ValueError, match=message):
+        module._validate_sft_eval_args(types.SimpleNamespace(**values))
+
+
+@pytest.mark.unit
 def test_bridge_load_path_falls_back_only_when_run_checkpoint_is_unavailable(monkeypatch, tmp_path):
     module = load_slime_arguments_module(monkeypatch)
     initial_checkpoint = tmp_path / "initial"
@@ -533,6 +570,7 @@ def test_eval_sample_logging_argument_defaults(monkeypatch):
 
     assert defaults["wandb_eval_sample_count"] == 4
     assert defaults["sample_save_dir"] is None
+    assert defaults["eval_sft_loss"] is False
     assert defaults["maxrl_score_space"] == "linear"
     score_space_action = next(
         action

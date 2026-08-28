@@ -1,3 +1,4 @@
+import copy
 import dataclasses
 import itertools
 import logging
@@ -18,6 +19,7 @@ from slime.backends.sglang_utils.external import start_external_rollout_servers
 from slime.backends.sglang_utils.sglang_config import ModelConfig, ServerGroupConfig, SglangConfig
 from slime.backends.sglang_utils.sglang_engine import SGLangEngine
 from slime.rollout.base_types import call_rollout_fn
+from slime.rollout.eval_dataset import get_eval_prompt_dataset
 from slime.utils import logging_utils
 from slime.utils.data import get_source
 from slime.utils.dp_schedule import build_dp_schedule
@@ -77,6 +79,16 @@ _SGLANG_DECODE_PERF_FIELDS = (
     ("decode/transfer_duration", "pd_decode_transfer_duration"),
     ("decode/forward_duration", "pd_decode_forward_duration"),
 )
+
+
+class _SftEvalDataSource:
+    """Expose every cached eval prompt once through the SFT rollout API."""
+
+    def __init__(self, samples: list[Sample]):
+        self._sample_groups = [[copy.deepcopy(sample)] for sample in samples]
+
+    def get_samples(self, _batch_size: int) -> list[list[Sample]]:
+        return self._sample_groups
 
 
 def _compute_maxrl_weights(args, samples: list[Sample], raw_rewards: list[float]) -> list[float]:
@@ -630,6 +642,44 @@ class RolloutManager:
         data = result.data
         self._save_debug_rollout_data(data, rollout_id=rollout_id, evaluation=True)
         _log_eval_rollout_data(rollout_id, self.args, data, result.metrics)
+
+    def prepare_sft_loss_eval(self, rollout_id):
+        """Build held-out teacher-forced batches with the configured SFT rollout."""
+        if self.args.loss_type != "sft_loss":
+            raise ValueError("prepare_sft_loss_eval is only valid for sft_loss.")
+
+        prepared = {}
+        next_sample_index = 0
+        for dataset_cfg in self.args.eval_datasets:
+            dataset = get_eval_prompt_dataset(self.args, dataset_cfg)
+            eval_data_source = _SftEvalDataSource(dataset.samples)
+            result = call_rollout_fn(
+                self.generate_rollout,
+                self.args,
+                rollout_id,
+                eval_data_source,
+                evaluation=False,
+            )
+            samples = result.samples
+            if not samples:
+                raise ValueError(f"SFT eval dataset {dataset_cfg.name!r} is empty.")
+            while isinstance(samples[0], list):
+                samples = list(itertools.chain.from_iterable(samples))
+            if len(samples) != len(dataset):
+                raise ValueError(
+                    f"SFT eval preprocessing changed dataset {dataset_cfg.name!r} from "
+                    f"{len(dataset)} to {len(samples)} samples."
+                )
+            for sample in samples:
+                sample.index = next_sample_index
+                next_sample_index += 1
+
+            train_data = self._convert_samples_to_train_data(samples)
+            prepared[dataset_cfg.name] = self._split_train_data_by_dp(
+                train_data,
+                global_batch_size=len(samples),
+            )
+        return prepared
 
     def prepare_regression_eval(self, rollout_id):
         """Cache every eval sample and return full-cache DP batches for Megatron."""

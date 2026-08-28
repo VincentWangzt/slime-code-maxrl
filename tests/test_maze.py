@@ -13,6 +13,7 @@ from maze.data import MazeGenerator, prepare_datasets
 from maze.validation import (
     estimate_pass_at_k,
     log_eval_metrics,
+    log_sft_eval_metrics,
     maze_reward,
     parse_maze,
     validate_maze_response,
@@ -127,6 +128,45 @@ def test_eval_reports_every_requested_pass_at_k(tmp_path):
         assert f"eval/Maze/optimal_pass@{k}" in log_dict
     report = json.loads((tmp_path / "maze_eval_7.json").read_text())
     assert report["datasets"]["Maze"]["generations_per_prompt"] == 1024
+
+
+@pytest.mark.unit
+def test_sft_eval_reports_eight_sample_pass_at_k(tmp_path):
+    samples = []
+    for group_index in range(2):
+        for sample_index in range(8):
+            success = group_index == 0 and sample_index == 0
+            samples.append(
+                Sample(
+                    index=group_index * 8 + sample_index,
+                    group_index=group_index,
+                    metadata={
+                        "maze_validation": {
+                            "success": success,
+                            "optimal": success,
+                            "reason": "success" if success else "not_at_goal",
+                        }
+                    },
+                )
+            )
+
+    log_dict = {}
+    handled = log_sft_eval_metrics(
+        11,
+        types.SimpleNamespace(sample_save_dir=str(tmp_path)),
+        {"Maze": {"samples": samples}},
+        log_dict,
+    )
+
+    assert handled is False
+    assert log_dict["eval/Maze/pass@1"] == pytest.approx(1 / 16)
+    assert log_dict["eval/Maze/pass@8"] == pytest.approx(0.5)
+    for k in (1, 2, 4, 8):
+        assert f"eval/Maze/pass@{k}" in log_dict
+        assert f"eval/Maze/optimal_pass@{k}" in log_dict
+    assert "eval/Maze/pass@16" not in log_dict
+    report = json.loads((tmp_path / "maze_eval_11.json").read_text())
+    assert report["datasets"]["Maze"]["generations_per_prompt"] == 8
 
 
 @pytest.mark.unit
