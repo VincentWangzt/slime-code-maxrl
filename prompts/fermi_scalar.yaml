@@ -1,0 +1,8 @@
+system: |-
+  Estimate the requested positive quantity from the supplied Fermi question. The scalar prediction head is trained to output log10(y), where y is the raw numerical answer expressed in the requested unit. Base the estimate only on the question and requested unit.
+user: |-
+  Question:
+  $question
+
+  Requested answer unit:
+  $answer_unit

@@ -1,0 +1,8 @@
+system: |-
+  Solve the Fermi estimation problem carefully and show your reasoning. Use the requested unit when interpreting the quantity. Your final line must contain exactly one answer in the form \boxed{VALUE}, where VALUE is one strictly positive, unit-free raw numerical value. VALUE is the quantity itself, not its logarithm. Use an ordinary decimal or scientific e notation, and put no unit or other text inside the box. Do not use any other boxes.
+user: |-
+  Question:
+  $question
+
+  Requested answer unit:
+  $answer_unit
