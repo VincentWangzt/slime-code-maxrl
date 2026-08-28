@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import math
 import re
 from collections.abc import Sequence
@@ -13,12 +12,8 @@ from typing import Any
 
 import yaml
 
-from slime.utils import logging_utils
-from slime.utils.metric_utils import compute_rollout_step
 from slime.utils.regression import REGRESSION_MODEL_PREDICTION_KEY
 from slime.utils.types import Sample
-
-logger = logging.getLogger(__name__)
 
 FERMI_SOURCES = ("SynthFP", "RealFP", "Fermi-Eval")
 FERMI_SCORE_SIGMA = 3.0
@@ -376,11 +371,11 @@ def log_eval_metrics(
     rollout_id: int,
     args: Any,
     data: dict[str, dict[str, Any]],
-    log_dict: dict[str, Any],
+    extra_metrics: dict[str, Any],
 ) -> bool:
-    """Log only Fermi score and within-0.5 accuracy for val/test and source."""
+    """Add Fermi metrics, then defer logging to Slime's default eval hook."""
+    del rollout_id
     direct_scalar = getattr(args, "loss_type", None) == "regression_loss"
-    log_dict.clear()
     evaluated = 0
     for dataset_name in _EVAL_DATASETS:
         dataset = data.get(dataset_name)
@@ -392,7 +387,7 @@ def log_eval_metrics(
         if not isinstance(samples, list) or not samples:
             raise ValueError(f"Fermi evaluation dataset {dataset_name!r} requires non-empty samples.")
         _add_eval_metrics(
-            log_dict,
+            extra_metrics,
             dataset_name,
             samples,
             direct_scalar=direct_scalar,
@@ -401,7 +396,4 @@ def log_eval_metrics(
     if evaluated == 0:
         raise ValueError(f"Fermi eval hook requires at least one of {_EVAL_DATASETS}.")
 
-    log_dict["eval/step"] = compute_rollout_step(args, rollout_id)
-    logger.info("eval %s: %s", rollout_id, log_dict)
-    logging_utils.log(args, log_dict, step_key="eval/step")
-    return True
+    return False

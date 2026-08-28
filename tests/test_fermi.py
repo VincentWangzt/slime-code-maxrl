@@ -208,16 +208,16 @@ def _eval_samples(*, direct_scalar):
 
 @pytest.mark.unit
 def test_scalar_and_generative_eval_use_identical_aggregation():
-    generated_log = {"default_metric_that_must_be_removed": 123}
-    scalar_log = {"default_metric_that_must_be_removed": 123}
+    generated_log = {"default_metric_that_must_be_preserved": 123}
+    scalar_log = {"default_metric_that_must_be_preserved": 123}
 
-    assert log_eval_metrics(
+    assert not log_eval_metrics(
         0,
         _eval_args("policy_loss"),
         {"FermiVal": {"samples": _eval_samples(direct_scalar=False)}},
         generated_log,
     )
-    assert log_eval_metrics(
+    assert not log_eval_metrics(
         0,
         _eval_args("regression_loss"),
         {"FermiVal": {"samples": _eval_samples(direct_scalar=True)}},
@@ -231,7 +231,7 @@ def test_scalar_and_generative_eval_use_identical_aggregation():
     assert generated_log["eval/FermiVal/score/RealFP"] == pytest.approx(5 / 6)
     assert generated_log["eval/FermiVal/score/Fermi-Eval"] == 0.0
     assert set(generated_log) == {
-        "eval/step",
+        "default_metric_that_must_be_preserved",
         *{
             f"eval/FermiVal/{metric}/{source}"
             for metric in ("score", "within_0p5_accuracy")
