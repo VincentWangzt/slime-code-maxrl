@@ -103,9 +103,11 @@ run_id="$(date -u +%Y%m%dT%H%M%SZ)-${git_revision:0:12}-$$-${RANDOM}"
 run_root="${DATA_DIR}/runs/${run_id}"
 mkdir -p "${run_root}/tmp"
 
+# Docker parses this option as CSV, so the comma-separated device value must
+# retain literal quotes when it reaches the CLI.
 container_id="$(docker run --detach \
   --init \
-  --gpus "device=${gpu_csv}" \
+  --gpus "\"device=${gpu_csv}\"" \
   --ipc=host \
   --ulimit memlock=-1 \
   --ulimit stack=67108864 \
