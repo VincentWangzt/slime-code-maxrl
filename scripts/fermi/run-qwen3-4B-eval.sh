@@ -142,7 +142,8 @@ SGLANG_ARGS=(
    --rollout-num-gpus "${NUM_GPUS}"
    --rollout-num-gpus-per-engine 2
    --sglang-mem-fraction-static 0.7
-   --sglang-server-concurrency 256
+   # This limit is per engine; Slime multiplies it by the engine count.
+   --sglang-server-concurrency 128
 )
 
 MISC_ARGS=(
