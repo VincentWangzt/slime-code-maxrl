@@ -194,9 +194,6 @@ _examples_synced/
 .env
 .DS_Store
 /AGENTS.md
-/build-server-image.sh
-/run-experiment.sh
-/run-debug.sh
 
 # ForecastBench source snapshots
 /forecast_data/raw/
