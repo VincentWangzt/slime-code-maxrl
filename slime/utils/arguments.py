@@ -17,6 +17,8 @@ from slime.utils.logging_utils import configure_logger
 logger = logging.getLogger(__name__)
 
 _MAXRL_REGRESSION_RM_PATH = "slime_plugins.maxrl.regression.boxed_gaussian_reward"
+_MAXRL_DISCRETE_RM_PATH = "maze.validation.maze_reward"
+_MAXRL_RM_PATHS = frozenset({_MAXRL_REGRESSION_RM_PATH, _MAXRL_DISCRETE_RM_PATH})
 _MAXRL_REWARD_KEY = "maxrl_log_likelihood"
 
 
@@ -981,6 +983,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                     "grpo",
                     "gspo",
                     "cispo",
+                    "rloo",
                     "reinforce_plus_plus",
                     "reinforce_plus_plus_baseline",
                     "ppo",
@@ -1824,10 +1827,11 @@ def _validate_maxrl_args(args) -> None:
             "--maxrl-score-space must be one of: linear, log10p."
         )
 
-    if args.custom_rm_path != _MAXRL_REGRESSION_RM_PATH:
+    if args.custom_rm_path not in _MAXRL_RM_PATHS:
         raise ValueError(
-            "MaxRL requires --custom-rm-path "
-            f"{_MAXRL_REGRESSION_RM_PATH}."
+            "MaxRL requires --custom-rm-path to provide normalized log "
+            "likelihoods via one of the bundled hooks: "
+            f"{', '.join(sorted(_MAXRL_RM_PATHS))}."
         )
     if args.reward_key != _MAXRL_REWARD_KEY:
         raise ValueError(f"MaxRL requires --reward-key {_MAXRL_REWARD_KEY}.")
@@ -1888,6 +1892,13 @@ def _validate_maxrl_args(args) -> None:
         raise ValueError("MaxRL requires --loss-type policy_loss.")
     if not args.compute_advantages_and_returns:
         raise ValueError("MaxRL requires advantage computation to remain enabled.")
+
+
+def _validate_rloo_args(args) -> None:
+    if args.advantage_estimator != "rloo":
+        return
+    if args.n_samples_per_prompt < 2:
+        raise ValueError("RLOO requires --n-samples-per-prompt >= 2.")
 
 
 def _validate_regression_args(args) -> None:
@@ -2193,6 +2204,7 @@ def slime_validate_args(args):
             setattr(args, k, v)
 
     _validate_maxrl_args(args)
+    _validate_rloo_args(args)
     _validate_regression_args(args)
 
     if args.eval_max_context_len is None:

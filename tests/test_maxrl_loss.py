@@ -17,7 +17,11 @@ NUM_GPUS = 0
 
 
 @pytest.mark.unit
-def test_maxrl_advantages_broadcast_response_coefficients(monkeypatch):
+@pytest.mark.parametrize("advantage_estimator", ["maxrl", "rloo"])
+def test_response_level_advantages_broadcast_response_coefficients(
+    monkeypatch,
+    advantage_estimator,
+):
     from megatron.core import mpu
 
     monkeypatch.setattr(
@@ -28,7 +32,7 @@ def test_maxrl_advantages_broadcast_response_coefficients(monkeypatch):
         kl_coef=0.0,
         kl_loss_type="k1",
         custom_advantage_function_path=None,
-        advantage_estimator="maxrl",
+        advantage_estimator=advantage_estimator,
         use_opd=False,
         normalize_advantages=False,
     )
@@ -50,7 +54,14 @@ def test_maxrl_advantages_broadcast_response_coefficients(monkeypatch):
     assert torch.equal(
         rollout_data["advantages"][1], torch.full((3,), -1.25)
     )
-    assert rollout_data["returns"] is rollout_data["advantages"]
+    for returns, advantages in zip(
+        rollout_data["returns"],
+        rollout_data["advantages"],
+        strict=True,
+    ):
+        assert torch.equal(returns, advantages)
+    if advantage_estimator == "maxrl":
+        assert rollout_data["returns"] is rollout_data["advantages"]
 
 
 @pytest.mark.unit

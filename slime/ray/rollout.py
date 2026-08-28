@@ -32,6 +32,7 @@ from slime.utils.regression import (
     merge_indexed_regression_predictions,
     transform_regression_target,
 )
+from slime.utils.rloo import compute_grouped_rloo_advantages
 from slime.utils.types import Sample
 
 from ..utils.metric_utils import has_repetition
@@ -85,6 +86,14 @@ def _compute_maxrl_weights(args, samples: list[Sample], raw_rewards: list[float]
         group_size=args.n_samples_per_prompt,
         degree=args.maxrl_degree,
         subtract_baseline=args.maxrl_subtract_baseline,
+    )
+
+
+def _compute_rloo_advantages(args, samples: list[Sample], raw_rewards: list[float]) -> list[float]:
+    return compute_grouped_rloo_advantages(
+        raw_rewards,
+        [sample.group_index for sample in samples],
+        group_size=args.n_samples_per_prompt,
     )
 
 
@@ -788,6 +797,10 @@ class RolloutManager:
         if self.args.advantage_estimator == "maxrl":
             weights = _compute_maxrl_weights(self.args, samples, raw_rewards)
             return raw_rewards, weights
+
+        if self.args.advantage_estimator == "rloo":
+            advantages = _compute_rloo_advantages(self.args, samples, raw_rewards)
+            return raw_rewards, advantages
 
         if (
             self.args.advantage_estimator in ["grpo", "gspo", "cispo", "reinforce_plus_plus_baseline"]

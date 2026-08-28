@@ -404,6 +404,41 @@ def test_maxrl_accepts_positive_even_eval_counts(monkeypatch):
     module._validate_maxrl_args(args)
 
 
+@pytest.mark.unit
+def test_maxrl_accepts_discrete_maze_reward(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    args = make_slime_validate_args(
+        advantage_estimator="maxrl",
+        rollout_batch_size=2,
+        n_samples_per_prompt=4,
+        n_samples_per_eval_prompt=1024,
+        eval_datasets=[
+            types.SimpleNamespace(
+                name="Maze",
+                n_samples_per_eval_prompt=1024,
+            )
+        ],
+        global_batch_size=8,
+        maxrl_degree=4,
+        custom_rm_path="maze.validation.maze_reward",
+        reward_key="maxrl_log_likelihood",
+    )
+
+    module._validate_maxrl_args(args)
+
+
+@pytest.mark.unit
+def test_rloo_requires_multiple_responses(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    args = make_slime_validate_args(
+        advantage_estimator="rloo",
+        n_samples_per_prompt=1,
+    )
+
+    with pytest.raises(ValueError, match="n-samples-per-prompt"):
+        module._validate_rloo_args(args)
+
+
 def _regression_validation_args(**overrides):
     values = {
         "loss_type": "regression_loss",
@@ -505,6 +540,12 @@ def test_eval_sample_logging_argument_defaults(monkeypatch):
         if action.dest == "maxrl_score_space"
     )
     assert set(score_space_action.choices) == {"linear", "log10p"}
+    advantage_action = next(
+        action
+        for action in parser._actions
+        if action.dest == "advantage_estimator"
+    )
+    assert "rloo" in advantage_action.choices
 
 
 @pytest.mark.unit
