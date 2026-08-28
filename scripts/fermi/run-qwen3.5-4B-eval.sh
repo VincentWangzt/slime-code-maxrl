@@ -30,7 +30,7 @@ else
 fi
 NUM_GPUS=${NUM_GPUS:-${SLIME_GPU_COUNT:-${DETECTED_GPUS}}}
 if ! [[ "$NUM_GPUS" =~ ^[0-9]+$ ]] || [ "$NUM_GPUS" -lt 2 ] || [ $((NUM_GPUS % 2)) -ne 0 ]; then
-    echo "Qwen3-4B Fermi eval requires a positive even number of visible GPUs (TP=2); got: $NUM_GPUS" >&2
+    echo "Qwen3.5-4B Fermi eval requires a positive even number of visible GPUs (TP=2); got: $NUM_GPUS" >&2
     exit 1
 fi
 echo "NUM_GPUS: $NUM_GPUS"
@@ -38,16 +38,16 @@ echo "NUM_GPUS: $NUM_GPUS"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." &>/dev/null && pwd)"
 cd "${REPO_ROOT}"
-source scripts/models/qwen3-4B.sh
+source scripts/models/qwen3.5-4B.sh
 
-HF_CHECKPOINT=${HF_CHECKPOINT:-/data/models/Qwen3-4B}
-REF_LOAD=${REF_LOAD:-/data/models/Qwen3-4B_torch_dist}
+HF_CHECKPOINT=${HF_CHECKPOINT:-/data/models/Qwen3.5-4B}
+REF_LOAD=${REF_LOAD:-/data/models/Qwen3.5-4B_torch_dist}
 FERMI_DATA_DIR=${FERMI_DATA_DIR:-/data/datasets/fermi}
 FERMI_TRAIN_DATA=${FERMI_TRAIN_DATA:-${FERMI_DATA_DIR}/fermi_train_log10.parquet}
 FERMI_VAL_DATA=${FERMI_VAL_DATA:-${FERMI_DATA_DIR}/fermi_val_log10.parquet}
 FERMI_TEST_DATA=${FERMI_TEST_DATA:-${FERMI_DATA_DIR}/fermi_test_log10.parquet}
 WANDB_PROJECT=${WANDB_PROJECT:-fermi}
-RUN_NAME=${RUN_NAME:-qwen3-4B-fermi-eval}
+RUN_NAME=${RUN_NAME:-qwen3.5-4B-fermi-eval}
 MESSAGE_PROCESSOR="{\"path\":\"slime_plugins.fermi.build_messages\",\"kwargs\":{\"template_path\":\"${REPO_ROOT}/prompts/fermi_generation.yaml\"}}"
 
 test -d "${HF_CHECKPOINT}"
@@ -143,7 +143,7 @@ SGLANG_ARGS=(
    --rollout-num-gpus-per-engine 2
    --sglang-mem-fraction-static 0.7
    # This limit is per engine; Slime multiplies it by the engine count.
-   --sglang-server-concurrency 32
+   --sglang-server-concurrency 128
 )
 
 MISC_ARGS=(
@@ -152,6 +152,7 @@ MISC_ARGS=(
    --accumulate-allreduce-grads-in-fp32
    --attention-softmax-in-fp32
    --attention-backend flash
+   --loss-mask-type qwen3_5
 )
 
 # launch the master node of ray in container
