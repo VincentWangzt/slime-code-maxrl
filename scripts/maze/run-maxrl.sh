@@ -87,7 +87,7 @@ OPTIMIZER_ARGS=(
    --optimizer adam
    --lr "${LEARNING_RATE}"
    --lr-decay-style constant
-   --weight-decay "${WEIGHT_DECAY}"
+   --weight-decay 0.01
    --adam-beta1 0.9
    --adam-beta2 0.95
 )
