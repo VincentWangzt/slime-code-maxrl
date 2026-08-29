@@ -110,6 +110,7 @@ container_id="$(docker run --detach \
   --gpus "\"device=${gpu_csv}\"" \
   --ipc=host \
   --ulimit memlock=-1 \
+  --ulimit nofile=65536:524288 \
   --ulimit stack=67108864 \
   --label "slime.project=${PROJECT_LABEL}" \
   --label "slime.role=experiment" \

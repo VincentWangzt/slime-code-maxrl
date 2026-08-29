@@ -2,23 +2,35 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-source "${SCRIPT_DIR}/_common.sh"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." &>/dev/null && pwd)"
+cd "${REPO_ROOT}"
 
-EVAL_CHECKPOINT="${EVAL_CHECKPOINT:-${SFT_CHECKPOINT}}"
-EVAL_REPORT_DIR="${EVAL_REPORT_DIR:-${RUN_ROOT}/eval}"
-RUN_NAME="${RUN_NAME:-maze-qwen2-eval}"
+export PYTHONUNBUFFERED=1
+NUM_GPUS="${SLIME_GPU_COUNT}"
 
-test -f "${HF_CHECKPOINT}/config.json"
-test -f "${REF_LOAD}/latest_checkpointed_iteration.txt"
-test -f "${EVAL_CHECKPOINT}/latest_checkpointed_iteration.txt"
-test -f "${MAZE_TEST_DATA}"
+source "${REPO_ROOT}/scripts/models/maze-qwen2.sh"
+
+RUN_NAME="maze-qwen2-eval"
+MAZE_TEST_DATA="/data/datasets/maze/17x17_1M/test.jsonl"
+HF_CHECKPOINT="/data/models/maze-qwen2"
+REF_LOAD="/data/models/maze-qwen2_torch_dist"
+EVAL_CHECKPOINT="/data/models/maze-qwen2-sft"
+EVAL_REPORT_DIR="/data/runs/maze/eval"
+WANDB_PROJECT="maxrl-maze"
+WANDB_MODE="online"
+WANDB_DIR="/data/wandb"
+
+MAX_TOKENS_PER_GPU=32768
+SGLANG_MEM_FRACTION="0.35"
+SGLANG_SERVER_CONCURRENCY=1024
 
 CKPT_ARGS=(
    --hf-checkpoint "${HF_CHECKPOINT}"
    --ref-load "${REF_LOAD}"
    --load "${EVAL_CHECKPOINT}"
 )
-TRAIN_ARGS=(
+
+ROLLOUT_ARGS=(
    --data-source-path slime.rollout.data_source.RolloutDataSource
    --prompt-data "${MAZE_TEST_DATA}"
    --input-key prompt
@@ -32,18 +44,21 @@ TRAIN_ARGS=(
    --rollout-max-response-len 180
    --rollout-max-context-len 512
 )
+
 REWARD_ARGS=(
    --custom-rm-path maze.validation.maze_reward
    --reward-key maze_success
    --eval-reward-key maze_success
    --custom-eval-rollout-log-function-path maze.validation.log_eval_metrics
 )
-ALGO_ARGS=(
+
+GRPO_ARGS=(
    --advantage-estimator grpo
    --kl-coef 0.0
    --entropy-coef 0.0
    --loss-type policy_loss
 )
+
 OPTIMIZER_ARGS=(
    --optimizer adam
    --lr 1e-6
@@ -55,6 +70,7 @@ OPTIMIZER_ARGS=(
    --no-load-optim
    --no-load-rng
 )
+
 PERF_ARGS=(
    --tensor-model-parallel-size 1
    --pipeline-model-parallel-size 1
@@ -62,9 +78,10 @@ PERF_ARGS=(
    --expert-model-parallel-size 1
    --expert-tensor-parallel-size 1
    --use-dynamic-batch-size
-   --max-tokens-per-gpu "${MAX_TOKENS_PER_GPU:-32768}"
+   --max-tokens-per-gpu "${MAX_TOKENS_PER_GPU}"
    --balance-data
 )
+
 EVAL_ARGS=(
    --eval-interval 1
    --eval-prompt-data Maze "${MAZE_TEST_DATA}"
@@ -78,11 +95,13 @@ EVAL_ARGS=(
    --eval-top-k -1
    --sample-save-dir "${EVAL_REPORT_DIR}"
 )
+
 SGLANG_ARGS=(
    --rollout-num-gpus-per-engine 1
-   --sglang-mem-fraction-static "${SGLANG_MEM_FRACTION:-0.35}"
-   --sglang-server-concurrency "${SGLANG_SERVER_CONCURRENCY:-1024}"
+   --sglang-mem-fraction-static "${SGLANG_MEM_FRACTION}"
+   --sglang-server-concurrency "${SGLANG_SERVER_CONCURRENCY}"
 )
+
 MISC_ARGS=(
    --attention-dropout 0.0
    --hidden-dropout 0.0
@@ -91,4 +110,46 @@ MISC_ARGS=(
    --attention-backend flash
 )
 
-maze_launch "${RUN_NAME}" --colocate "$@"
+WANDB_ARGS=(
+   --use-wandb
+   --wandb-mode "${WANDB_MODE}"
+   --wandb-dir "${WANDB_DIR}"
+   --wandb-project "${WANDB_PROJECT}"
+   --wandb-group "${RUN_NAME}"
+   --disable-wandb-random-suffix
+)
+
+export MASTER_ADDR="127.0.0.1"
+ray start \
+   --head \
+   --node-ip-address "${MASTER_ADDR}" \
+   --num-gpus "${NUM_GPUS}" \
+   --disable-usage-stats \
+   --dashboard-host=0.0.0.0 \
+   --dashboard-port=8265
+
+RUNTIME_ENV_JSON="{
+  \"env_vars\": {
+    \"PYTHONPATH\": \"/root/Megatron-LM/:${REPO_ROOT}\",
+    \"CUDA_DEVICE_MAX_CONNECTIONS\": \"1\"
+  }
+}"
+
+ray job submit --address="http://127.0.0.1:8265" \
+   --runtime-env-json="${RUNTIME_ENV_JSON}" \
+   -- python3 train.py \
+   --actor-num-nodes 1 \
+   --actor-num-gpus-per-node "${NUM_GPUS}" \
+   --num-gpus-per-node "${NUM_GPUS}" \
+   --colocate \
+   "${MODEL_ARGS[@]}" \
+   "${CKPT_ARGS[@]}" \
+   "${ROLLOUT_ARGS[@]}" \
+   "${REWARD_ARGS[@]}" \
+   "${GRPO_ARGS[@]}" \
+   "${OPTIMIZER_ARGS[@]}" \
+   "${PERF_ARGS[@]}" \
+   "${EVAL_ARGS[@]}" \
+   "${SGLANG_ARGS[@]}" \
+   "${MISC_ARGS[@]}" \
+   "${WANDB_ARGS[@]}"

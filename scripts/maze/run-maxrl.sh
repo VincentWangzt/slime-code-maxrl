@@ -2,45 +2,57 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
-source "${SCRIPT_DIR}/_common.sh"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." &>/dev/null && pwd)"
+cd "${REPO_ROOT}"
 
-maze_require_sft_checkpoint
+export PYTHONUNBUFFERED=1
+NUM_GPUS="${SLIME_GPU_COUNT}"
 
-N_SAMPLES="${N_SAMPLES:-128}"
-ROLLOUT_BATCH_SIZE="${ROLLOUT_BATCH_SIZE:-2}"
+source "${REPO_ROOT}/scripts/models/maze-qwen2.sh"
+
+MAZE_TRAIN_DATA="/data/datasets/maze/17x17_1M/train.jsonl"
+MAZE_TEST_DATA="/data/datasets/maze/17x17_1M/test.jsonl"
+HF_CHECKPOINT="/data/models/maze-qwen2"
+REF_LOAD="/data/models/maze-qwen2_torch_dist"
+LOAD_CHECKPOINT="/data/models/maze-qwen2-sft"
+SAVE_CHECKPOINT="/data/runs/maze/maxrl"
+WANDB_PROJECT="maxrl-maze"
+WANDB_MODE="online"
+WANDB_DIR="/data/wandb"
+
+N_SAMPLES=128
+ROLLOUT_BATCH_SIZE=2
 GLOBAL_BATCH_SIZE=$((ROLLOUT_BATCH_SIZE * N_SAMPLES))
-MAXRL_DEGREE="${MAXRL_DEGREE:-64}"
-SAVE_CHECKPOINT="${SAVE_CHECKPOINT:-${RUN_ROOT}/maxrl}"
-LOAD_CHECKPOINT="${LOAD_CHECKPOINT:-${SFT_CHECKPOINT}}"
-RESET_TRAINING_STATE="${RESET_TRAINING_STATE:-1}"
-RUN_NAME="${RUN_NAME:-maze-qwen2-discrete-maxrl-d${MAXRL_DEGREE}}"
-maze_require_data_parallel_batch "${GLOBAL_BATCH_SIZE}"
-test -f "${LOAD_CHECKPOINT}/latest_checkpointed_iteration.txt"
+NUM_ROLLOUT=3000
+SAVE_INTERVAL=250
+EVAL_INTERVAL=250
+MAXRL_DEGREE=64
+RUN_NAME="maze-qwen2-discrete-maxrl-d${MAXRL_DEGREE}"
+LEARNING_RATE="1e-4"
+WEIGHT_DECAY="0.01"
+MAX_TOKENS_PER_GPU=32768
+SGLANG_MEM_FRACTION="0.35"
+SGLANG_SERVER_CONCURRENCY=1024
 
 CKPT_ARGS=(
    --hf-checkpoint "${HF_CHECKPOINT}"
    --ref-load "${REF_LOAD}"
    --load "${LOAD_CHECKPOINT}"
    --save "${SAVE_CHECKPOINT}"
-   --save-interval "${SAVE_INTERVAL:-250}"
+   --save-interval "${SAVE_INTERVAL}"
+   --finetune
+   --no-load-optim
+   --no-load-rng
+   --start-rollout-id 0
 )
-if [[ "${RESET_TRAINING_STATE}" == "1" ]]; then
-   if [[ -e "${SAVE_CHECKPOINT}" ]]; then
-      echo "Refusing to reset into existing SAVE_CHECKPOINT: ${SAVE_CHECKPOINT}" >&2
-      exit 2
-   fi
-   CKPT_ARGS+=(--finetune --no-load-optim --no-load-rng --start-rollout-id 0)
-elif [[ "${RESET_TRAINING_STATE}" != "0" ]]; then
-   echo "RESET_TRAINING_STATE must be 0 or 1." >&2
-   exit 2
-fi
-TRAIN_ARGS=(
+
+ROLLOUT_ARGS=(
    --data-source-path slime.rollout.data_source.RolloutDataSource
    --prompt-data "${MAZE_TRAIN_DATA}"
    --input-key prompt
    --label-key sequence
    --rollout-shuffle
-   --num-rollout "${NUM_ROLLOUT:-3000}"
+   --num-rollout "${NUM_ROLLOUT}"
    --rollout-batch-size "${ROLLOUT_BATCH_SIZE}"
    --n-samples-per-prompt "${N_SAMPLES}"
    --num-steps-per-rollout 1
@@ -53,6 +65,7 @@ TRAIN_ARGS=(
    --rollout-top-k -1
    --rollout-stop-token-ids 2
 )
+
 REWARD_ARGS=(
    --custom-rm-path maze.validation.maze_reward
    --reward-key maxrl_log_likelihood
@@ -60,7 +73,8 @@ REWARD_ARGS=(
    --custom-rollout-log-function-path maze.validation.log_train_metrics
    --custom-eval-rollout-log-function-path maze.validation.log_eval_metrics
 )
-ALGO_ARGS=(
+
+MAXRL_ARGS=(
    --advantage-estimator maxrl
    --maxrl-degree "${MAXRL_DEGREE}"
    --kl-coef 0.0
@@ -69,14 +83,16 @@ ALGO_ARGS=(
    --eps-clip-high 0.28
    --loss-type policy_loss
 )
+
 OPTIMIZER_ARGS=(
    --optimizer adam
-   --lr "${LR:-1e-4}"
+   --lr "${LEARNING_RATE}"
    --lr-decay-style constant
-   --weight-decay "${WEIGHT_DECAY:-0.01}"
+   --weight-decay "${WEIGHT_DECAY}"
    --adam-beta1 0.9
    --adam-beta2 0.95
 )
+
 PERF_ARGS=(
    --tensor-model-parallel-size 1
    --pipeline-model-parallel-size 1
@@ -84,31 +100,30 @@ PERF_ARGS=(
    --expert-model-parallel-size 1
    --expert-tensor-parallel-size 1
    --use-dynamic-batch-size
-   --max-tokens-per-gpu "${MAX_TOKENS_PER_GPU:-32768}"
+   --max-tokens-per-gpu "${MAX_TOKENS_PER_GPU}"
    --balance-data
 )
-EVAL_ARGS=()
-if [[ "${ENABLE_EVAL:-1}" == "1" ]]; then
-   test -f "${MAZE_TEST_DATA}"
-   EVAL_ARGS=(
-      --eval-interval "${EVAL_INTERVAL:-250}"
-      --eval-prompt-data Maze "${MAZE_TEST_DATA}"
-      --eval-input-key prompt
-      --eval-label-key sequence
-      --n-samples-per-eval-prompt 1024
-      --eval-max-prompt-len 320
-      --eval-max-response-len 180
-      --eval-temperature 1.0
-      --eval-top-p 1.0
-      --eval-top-k -1
-      --sample-save-dir "${SAVE_CHECKPOINT}/eval"
-   )
-fi
+
+EVAL_ARGS=(
+   --eval-interval "${EVAL_INTERVAL}"
+   --eval-prompt-data Maze "${MAZE_TEST_DATA}"
+   --eval-input-key prompt
+   --eval-label-key sequence
+   --n-samples-per-eval-prompt 1024
+   --eval-max-prompt-len 320
+   --eval-max-response-len 180
+   --eval-temperature 1.0
+   --eval-top-p 1.0
+   --eval-top-k -1
+   --sample-save-dir "${SAVE_CHECKPOINT}/eval"
+)
+
 SGLANG_ARGS=(
    --rollout-num-gpus-per-engine 1
-   --sglang-mem-fraction-static "${SGLANG_MEM_FRACTION:-0.35}"
-   --sglang-server-concurrency "${SGLANG_SERVER_CONCURRENCY:-1024}"
+   --sglang-mem-fraction-static "${SGLANG_MEM_FRACTION}"
+   --sglang-server-concurrency "${SGLANG_SERVER_CONCURRENCY}"
 )
+
 MISC_ARGS=(
    --attention-dropout 0.0
    --hidden-dropout 0.0
@@ -117,4 +132,46 @@ MISC_ARGS=(
    --attention-backend flash
 )
 
-maze_launch "${RUN_NAME}" --colocate "$@"
+WANDB_ARGS=(
+   --use-wandb
+   --wandb-mode "${WANDB_MODE}"
+   --wandb-dir "${WANDB_DIR}"
+   --wandb-project "${WANDB_PROJECT}"
+   --wandb-group "${RUN_NAME}"
+   --disable-wandb-random-suffix
+)
+
+export MASTER_ADDR="127.0.0.1"
+ray start \
+   --head \
+   --node-ip-address "${MASTER_ADDR}" \
+   --num-gpus "${NUM_GPUS}" \
+   --disable-usage-stats \
+   --dashboard-host=0.0.0.0 \
+   --dashboard-port=8265
+
+RUNTIME_ENV_JSON="{
+  \"env_vars\": {
+    \"PYTHONPATH\": \"/root/Megatron-LM/:${REPO_ROOT}\",
+    \"CUDA_DEVICE_MAX_CONNECTIONS\": \"1\"
+  }
+}"
+
+ray job submit --address="http://127.0.0.1:8265" \
+   --runtime-env-json="${RUNTIME_ENV_JSON}" \
+   -- python3 train.py \
+   --actor-num-nodes 1 \
+   --actor-num-gpus-per-node "${NUM_GPUS}" \
+   --num-gpus-per-node "${NUM_GPUS}" \
+   --colocate \
+   "${MODEL_ARGS[@]}" \
+   "${CKPT_ARGS[@]}" \
+   "${ROLLOUT_ARGS[@]}" \
+   "${REWARD_ARGS[@]}" \
+   "${MAXRL_ARGS[@]}" \
+   "${OPTIMIZER_ARGS[@]}" \
+   "${PERF_ARGS[@]}" \
+   "${EVAL_ARGS[@]}" \
+   "${SGLANG_ARGS[@]}" \
+   "${MISC_ARGS[@]}" \
+   "${WANDB_ARGS[@]}"

@@ -29,9 +29,10 @@ GPU:
 ./run-experiment.sh --gpus <id> -- bash scripts/maze/prepare-model.sh
 ```
 
-`NUM_EPISODES`, `TEST_SIZE`, `MAZE_SIZE`, `MAZE_SEED`, `MAZE_DATA_DIR`,
-`HF_CHECKPOINT`, and `REF_LOAD` override the defaults. Dataset and model setup
-use separate output paths when changing these values.
+The preparation scripts keep their paths and generation settings in a variable
+block near the top of each file. Edit those values directly when preparing a
+different dataset or checkpoint; they are not configured through environment
+variables.
 
 ## Train
 
@@ -53,14 +54,19 @@ held-out response-token loss with Megatron and then asks SGLang for eight
 generations per held-out prompt. The generation pass logs unbiased pass@k and
 optimal-pass@k for `k = 1, 2, 4, 8`. There is no redundant evaluation before
 the first optimizer step. The launcher always enables generative evaluation,
-colocation, an 8,192-request SGLang concurrency limit, and a 65,536 soft
-open-file limit.
+colocation, an 8,192-request SGLang concurrency limit, and a `0.7` SGLang
+static GPU-memory fraction.
 
-The SFT launcher accepts no configuration arguments and does not read training
-or evaluation behavior from environment variables. Run it directly through
-`run-experiment.sh`; wrapper-provided GPU metadata and credentials are the only
-runtime inputs. All maze training launchers reject execution outside an
-experiment-wrapper container.
+Every Maze train/evaluation launcher now contains its own paths,
+hyperparameters, argument arrays, Ray startup, runtime environment, and Ray job
+submission. To change a run, edit or copy its launcher. The scripts do not use
+environment variables or command-line arguments as experiment-configuration
+overrides; wrapper-provided GPU metadata and credentials remain runtime inputs.
+Run them through `run-experiment.sh`.
+
+`run-experiment.sh` gives new experiment containers a 65,536 soft and 524,288
+hard open-file limit. This applies to Ray, SGLang, and the other container
+processes from startup, so the SFT launcher no longer calls `ulimit` itself.
 
 `run-experiment.sh` starts a retained, detached container. Before launching a
 dependent stage, use the printed `docker wait` and `docker inspect` commands to
@@ -72,12 +78,11 @@ estimator. GRPO uses group-normalized binary rewards. RLOO uses the exact
 leave-one-out baseline added for this task. The RL launchers default to 128
 samples per prompt and a global batch of 256, matching the upstream setup.
 
-The RL launchers retain overrides including `WANDB_PROJECT`, `WANDB_TEAM`,
-`WANDB_MODE`, `RUN_NAME`, `NUM_ROLLOUT`, `ROLLOUT_BATCH_SIZE`, `N_SAMPLES`,
-`LR`, and `SAVE_CHECKPOINT`. Set `WANDB_MODE=offline` for RL smoke validation
-without a networked W&B run. RL launchers reset optimizer, RNG, and rollout
-counters when starting from `SFT_CHECKPOINT`. To resume an RL run, set
-`LOAD_CHECKPOINT=$SAVE_CHECKPOINT RESET_TRAINING_STATE=0`.
+The RL launchers start fresh from the SFT checkpoint by default and explicitly
+reset optimizer, RNG, and rollout counters. Their periodic evaluation argument
+blocks are active by default. To resume an RL run, point `LOAD_CHECKPOINT` at
+the saved run and remove the `--finetune`, `--no-load-optim`,
+`--no-load-rng`, and `--start-rollout-id 0` entries from `CKPT_ARGS`.
 
 ## Evaluate
 
@@ -86,29 +91,19 @@ of the 256 held-out prompts. It logs and writes unbiased pass@k estimates for
 `k = 1, 4, 16, 64, 256, 1024`, for both successful and optimal solutions.
 
 ```bash
-EVAL_CHECKPOINT=/data/runs/maze/maxrl \
-  ./run-experiment.sh --gpus <id> -- bash scripts/maze/run-eval.sh
+./run-experiment.sh --gpus <id> -- bash scripts/maze/run-eval.sh
 ```
 
 Reports are written below `/data/runs/maze/eval` by default. Periodic
 evaluation in each RL launcher uses the same 1,024-generation protocol. The
 smaller eight-generation protocol applies only to the evaluation integrated
-into SFT.
+into SFT. `run-eval.sh` evaluates the SFT checkpoint by default; edit its
+`EVAL_CHECKPOINT` assignment to evaluate MaxRL, GRPO, or RLOO.
 
 ## RL one-step validation
 
-The production SFT script is intentionally fixed and cannot be shortened into
-a smoke run with environment variables. The following reduced RL run exercises
-one optimizer step; use distinct output directories so it cannot overwrite a
-real checkpoint:
-
-```bash
-./run-experiment.sh --gpus <id> -- env \
-  WANDB_MODE=offline NUM_ROLLOUT=1 ENABLE_EVAL=0 N_SAMPLES=2 \
-  ROLLOUT_BATCH_SIZE=1 SFT_CHECKPOINT=/data/runs/maze/smoke-sft \
-  MAXRL_DEGREE=2 SAVE_CHECKPOINT=/data/runs/maze/smoke-maxrl \
-  bash scripts/maze/run-maxrl.sh
-```
-
-`run-grpo.sh` and `run-rloo.sh` accept the same two-sample smoke settings
-without `MAXRL_DEGREE`.
+For a one-step smoke run, copy the relevant launcher and edit its variable and
+argument blocks directly: use a distinct `SAVE_CHECKPOINT`, set
+`NUM_ROLLOUT=1`, reduce the rollout/sample counts, set `WANDB_MODE="offline"`,
+and comment out the `EVAL_ARGS` expansion in the final `ray job submit`
+command if evaluation is not part of the smoke check.
