@@ -105,7 +105,7 @@ REWARD_ARGS=(
 )
 
 PERF_ARGS=(
-   --tensor-model-parallel-size 2
+   --tensor-model-parallel-size 1
    --sequence-parallel
    --pipeline-model-parallel-size 1
    --context-parallel-size 1
@@ -143,10 +143,10 @@ WANDB_ARGS=(
 
 SGLANG_ARGS=(
    --rollout-num-gpus "${NUM_GPUS}"
-   --rollout-num-gpus-per-engine 2
+   --rollout-num-gpus-per-engine 1
    --sglang-mem-fraction-static 0.9
    # This limit is per engine; Slime multiplies it by the engine count.
-   --sglang-server-concurrency 128
+   --sglang-server-concurrency 64
 )
 
 MISC_ARGS=(
