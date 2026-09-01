@@ -50,12 +50,38 @@ its own algorithm arguments and logs to Weights & Biases by default.
 with the requested longer training run: 2,500 optimizer steps, global batch
 size 32, AdamW at a constant `5e-4` learning rate, no warmup, gradient clipping
 at 1.0, and checkpoints every 500 steps. Every 50 steps it computes the
-held-out response-token loss with Megatron and then asks SGLang for eight
-generations per held-out prompt. The generation pass logs unbiased pass@k and
-optimal-pass@k for `k = 1, 2, 4, 8`. There is no redundant evaluation before
-the first optimizer step. The launcher always enables generative evaluation,
-colocation, an 8,192-request SGLang concurrency limit, and a `0.7` SGLang
-static GPU-memory fraction.
+held-out response-token loss with Megatron and then asks the batched Hugging
+Face rollout backend for eight generations per held-out prompt. The generation
+pass logs unbiased pass@k and optimal-pass@k for `k = 1, 2, 4, 8`. There is no
+redundant evaluation before the first optimizer step. The launcher always
+enables generative evaluation and colocation.
+
+All Maze launchers use `--rollout-backend huggingface`. One Transformers worker
+runs on each rollout GPU and processes at most `HF_ROLLOUT_BATCH_SIZE` prompts
+per `model.generate` call. The workers participate in Slime's existing
+colocated weight update: converted Hugging Face tensors move directly from the
+Megatron actor through CUDA IPC before each rollout, so generation observes the
+current policy without an intermediate checkpoint. During training the HF
+workers move their model weights to CPU, just as the colocated SGLang backend
+releases its model memory. This direct tensor path currently requires tensor,
+pipeline, and expert model parallel sizes of one; the Maze launchers already
+use that layout.
+
+This backend is intentionally narrow. It supports text-only causal models,
+full-sequence rollouts, token-id stopping, and native Transformers temperature,
+top-p, and top-k sampling. It does not support multimodal/custom generation,
+partial rollouts, group reward models, expert-routing replay, or fault-tolerant
+engine recovery.
+Global custom reward functions are called with a `list[Sample]` and must support
+that batched contract; `maze.validation.maze_reward` does. Other cases should
+continue to use SGLang. The principal target is the compact 32-token-vocabulary
+Maze model, where batching hundreds of requests in one Transformers call avoids
+the per-request serving overhead of an HTTP engine. The backend retains
+Transformers' processed score tensor for each generation step so it can recover
+exact selected-token log probabilities and top-p replay support. This is small
+for Maze's vocabulary. The same recorded support also makes top-k-only rollout
+log probabilities reproducible by the Megatron actor. Reduce
+`HF_ROLLOUT_BATCH_SIZE` for models with conventional large vocabularies.
 
 Every Maze train/evaluation launcher now contains its own paths,
 hyperparameters, argument arrays, Ray startup, runtime environment, and Ray job
@@ -65,8 +91,8 @@ overrides; wrapper-provided GPU metadata and credentials remain runtime inputs.
 Run them through `run-experiment.sh`.
 
 `run-experiment.sh` gives new experiment containers a 65,536 soft and 524,288
-hard open-file limit. This applies to Ray, SGLang, and the other container
-processes from startup, so the SFT launcher no longer calls `ulimit` itself.
+hard open-file limit. This applies to Ray and the other container processes
+from startup, so the launchers do not set `ulimit` themselves.
 
 `run-experiment.sh` starts a retained, detached container. Before launching a
 dependent stage, use the printed `docker wait` and `docker inspect` commands to

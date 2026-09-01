@@ -28,8 +28,7 @@ SFT_SAVE_INTERVAL=500
 SFT_EVAL_INTERVAL=50
 SFT_EVAL_SAMPLES=8
 SFT_MAX_TOKENS_PER_GPU=32768
-SFT_SGLANG_MEM_FRACTION="0.7"
-SFT_SGLANG_SERVER_CONCURRENCY=8192
+HF_ROLLOUT_BATCH_SIZE=4096
 
 CKPT_ARGS=(
    --hf-checkpoint "${HF_CHECKPOINT}"
@@ -88,7 +87,7 @@ PERF_ARGS=(
 )
 
 EVAL_ARGS=(
-   --eval-function-path slime.rollout.sglang_rollout.generate_rollout
+   --eval-function-path slime.rollout.hf_rollout.generate_rollout
    --eval-interval "${SFT_EVAL_INTERVAL}"
    --eval-sft-loss
    --skip-eval-before-train
@@ -105,10 +104,10 @@ EVAL_ARGS=(
    --sample-save-dir "${SFT_CHECKPOINT}/eval"
 )
 
-SGLANG_ARGS=(
+BACKEND_ARGS=(
+   --rollout-backend huggingface
+   --hf-rollout-batch-size "${HF_ROLLOUT_BATCH_SIZE}"
    --rollout-num-gpus-per-engine 1
-   --sglang-mem-fraction-static "${SFT_SGLANG_MEM_FRACTION}"
-   --sglang-server-concurrency "${SFT_SGLANG_SERVER_CONCURRENCY}"
 )
 
 MISC_ARGS=(
@@ -158,6 +157,6 @@ ray job submit --address="http://127.0.0.1:8265" \
    "${OPTIMIZER_ARGS[@]}" \
    "${PERF_ARGS[@]}" \
    "${EVAL_ARGS[@]}" \
-   "${SGLANG_ARGS[@]}" \
+   "${BACKEND_ARGS[@]}" \
    "${MISC_ARGS[@]}" \
    "${WANDB_ARGS[@]}"

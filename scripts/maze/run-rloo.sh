@@ -30,8 +30,7 @@ EVAL_INTERVAL=250
 LEARNING_RATE="1e-4"
 WEIGHT_DECAY="0.01"
 MAX_TOKENS_PER_GPU=32768
-SGLANG_MEM_FRACTION="0.35"
-SGLANG_SERVER_CONCURRENCY=1024
+HF_ROLLOUT_BATCH_SIZE=4096
 
 CKPT_ARGS=(
    --hf-checkpoint "${HF_CHECKPOINT}"
@@ -46,6 +45,7 @@ CKPT_ARGS=(
 )
 
 ROLLOUT_ARGS=(
+   --rollout-function-path slime.rollout.hf_rollout.generate_rollout
    --data-source-path slime.rollout.data_source.RolloutDataSource
    --prompt-data "${MAZE_TRAIN_DATA}"
    --input-key prompt
@@ -104,6 +104,7 @@ PERF_ARGS=(
 )
 
 EVAL_ARGS=(
+   --eval-function-path slime.rollout.hf_rollout.generate_rollout
    --eval-interval "${EVAL_INTERVAL}"
    --eval-prompt-data Maze "${MAZE_TEST_DATA}"
    --eval-input-key prompt
@@ -117,10 +118,10 @@ EVAL_ARGS=(
    --sample-save-dir "${SAVE_CHECKPOINT}/eval"
 )
 
-SGLANG_ARGS=(
+BACKEND_ARGS=(
+   --rollout-backend huggingface
+   --hf-rollout-batch-size "${HF_ROLLOUT_BATCH_SIZE}"
    --rollout-num-gpus-per-engine 1
-   --sglang-mem-fraction-static "${SGLANG_MEM_FRACTION}"
-   --sglang-server-concurrency "${SGLANG_SERVER_CONCURRENCY}"
 )
 
 MISC_ARGS=(
@@ -171,6 +172,6 @@ ray job submit --address="http://127.0.0.1:8265" \
    "${OPTIMIZER_ARGS[@]}" \
    "${PERF_ARGS[@]}" \
    "${EVAL_ARGS[@]}" \
-   "${SGLANG_ARGS[@]}" \
+   "${BACKEND_ARGS[@]}" \
    "${MISC_ARGS[@]}" \
    "${WANDB_ARGS[@]}"

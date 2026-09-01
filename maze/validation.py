@@ -171,8 +171,8 @@ def _score_sample(sample: Sample) -> dict[str, float]:
         else sample.prompt
     )
     response = sample.response
-    # Qwen's byte-level decoder concatenates the added word tokens. SGLang
-    # always returns generated token ids, so validate those without ambiguity.
+    # Qwen's byte-level decoder concatenates the added word tokens. Rollout
+    # backends preserve generated token ids, so validate those without ambiguity.
     if sample.response_length > 0 and len(sample.tokens) >= sample.response_length:
         response_token_ids = sample.tokens[-sample.response_length :]
         if all(int(token_id) in MAZE_TOKEN_BY_ID for token_id in response_token_ids):

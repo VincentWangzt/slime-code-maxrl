@@ -35,7 +35,7 @@ from slime.utils.regression import (
     transform_regression_target,
 )
 from slime.utils.rloo import compute_grouped_rloo_advantages
-from slime.utils.types import Sample
+from slime.utils.types import Sample, requires_rollout_token_support
 
 from ..utils.metric_utils import has_repetition
 from .rollout_validation import validate_server_group_gpu_indices
@@ -170,7 +170,7 @@ def _tensorize_rollout_data_for_training(rollout_data: dict[str, Any]) -> None:
 
 @dataclasses.dataclass
 class ServerGroup:
-    """A group of homogeneous SGLang engines with the same configuration.
+    """A group of homogeneous rollout engines with the same configuration.
 
     All engines in a group share the same tp_size / nodes_per_engine / pg.
     A RolloutServer may contain multiple ServerGroups (e.g. prefill vs decode
@@ -346,10 +346,10 @@ class ServerGroup:
 
 @dataclasses.dataclass
 class RolloutServer:
-    """A model served behind a shared router, with one or more server groups.
+    """A rollout model backed by one or more server groups.
 
-    Each RolloutServer represents one model deployed behind a single router.
-    A server may contain multiple ServerGroups with different
+    HTTP-serving backends can additionally share one router. A server may
+    contain multiple ServerGroups with different
     ``num_gpus_per_engine`` (e.g. prefill TP=2, decode TP=4).
     """
 
@@ -502,7 +502,8 @@ class RolloutManager:
         if self.args.debug_train_only:
             self.servers: dict[str, Any] = {}
         else:
-            init_http_client(args)
+            if self.args.rollout_backend == "sglang":
+                init_http_client(args)
             self.servers, rollout_init_handles = start_rollout_servers(args, pg)
 
         data_source_cls = load_function(self.args.data_source_path)
@@ -968,7 +969,7 @@ class RolloutManager:
         if samples[0].rollout_log_probs is not None:
             train_data["rollout_log_probs"] = [sample.rollout_log_probs for sample in samples]
 
-        if getattr(self.args, "rollout_top_p", 1.0) != 1.0:
+        if requires_rollout_token_support(self.args):
             for sample in samples:
                 assert sample.rollout_top_p_token_ids is not None
                 assert sample.rollout_top_p_token_offsets is not None
@@ -1288,6 +1289,9 @@ def start_rollout_servers(args, pg) -> tuple[dict[str, Any], list[Any]]:
     Note: ``init_http_client`` should be called separately before this,
     as the HTTP client is shared across all servers.
     """
+    if args.rollout_backend == "huggingface":
+        return _start_hf_rollout_servers(args, pg)
+
     if args.rollout_external:
         return start_external_rollout_servers(args, start_router=_start_router)
 
@@ -1414,6 +1418,61 @@ def start_rollout_servers(args, pg) -> tuple[dict[str, Any], list[Any]]:
     args.sglang_model_routers = {name: (srv.router_ip, srv.router_port) for name, srv in servers.items()}
 
     return servers, pending_init_handles
+
+
+def _start_hf_rollout_servers(args, pg) -> tuple[dict[str, Any], list[Any]]:
+    """Start one lightweight Transformers worker per rollout GPU."""
+    from slime.backends.hf_utils.hf_engine import HuggingFaceGenerationEngine
+    from slime.rollout.hf_rollout import set_hf_rollout_engines
+
+    placement_group, reordered_bundle_indices, _reordered_gpu_ids = pg
+    if placement_group is None:
+        raise ValueError("The Hugging Face rollout backend requires a GPU placement group.")
+    if len(reordered_bundle_indices) < args.rollout_num_gpus:
+        raise ValueError(
+            "The rollout placement group has fewer GPU bundles than requested by the HF backend: "
+            f"available={len(reordered_bundle_indices)}, requested={args.rollout_num_gpus}."
+        )
+
+    HfRolloutRayActor = ray.remote(HuggingFaceGenerationEngine)
+    engines = []
+    init_handles = []
+    for rank in range(args.rollout_num_gpus):
+        scheduling_strategy = PlacementGroupSchedulingStrategy(
+            placement_group=placement_group,
+            placement_group_capture_child_tasks=True,
+            placement_group_bundle_index=reordered_bundle_indices[rank],
+        )
+        engine = HfRolloutRayActor.options(
+            num_cpus=0.2,
+            num_gpus=0.2,
+            scheduling_strategy=scheduling_strategy,
+            runtime_env={"env_vars": add_default_ray_env_vars()},
+        ).remote(args, rank=rank)
+        engines.append(engine)
+        init_handles.append(engine.init.remote())
+
+    megatron_num_gpus = _compute_megatron_num_gpus(args)
+    group = ServerGroup(
+        args=args,
+        pg=pg,
+        all_engines=engines,
+        num_gpus_per_engine=1,
+        num_new_engines=len(engines),
+        worker_type="regular",
+        rank_offset=0,
+        gpu_offset=0,
+        needs_offload=args.offload_rollout and megatron_num_gpus > 0,
+        model_path=args.hf_checkpoint,
+    )
+    server = RolloutServer(
+        server_groups=[group],
+        model_name="default",
+        update_weights=True,
+    )
+    set_hf_rollout_engines(engines)
+    logger.info("Started %d Hugging Face rollout engine(s).", len(engines))
+    return {"default": server}, init_handles
 
 
 def _resolve_sglang_config(args) -> SglangConfig:

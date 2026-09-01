@@ -293,6 +293,77 @@ def make_slime_validate_args(**overrides):
     return types.SimpleNamespace(**values)
 
 
+def make_hf_rollout_validation_args(**overrides):
+    eval_dataset = types.SimpleNamespace(
+        name="Maze",
+        custom_generate_function_path=None,
+        app_service=None,
+        top_p=1.0,
+        top_k=-1,
+        stop=None,
+        no_stop_trim=None,
+    )
+    values = dict(
+        rollout_backend="huggingface",
+        debug_train_only=False,
+        hf_rollout_batch_size=256,
+        rollout_num_gpus=1,
+        rollout_num_gpus_per_engine=1,
+        rollout_external=False,
+        sglang_config=None,
+        prefill_num_servers=None,
+        update_weight_mode="full",
+        update_weight_transport="nccl",
+        colocate=True,
+        debug_rollout_only=False,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
+        expert_model_parallel_size=1,
+        actor_num_nodes=1,
+        actor_num_gpus_per_node=1,
+        update_weight_local_checkpoint_dir=None,
+        partial_rollout=False,
+        group_rm=False,
+        custom_generate_function_path=None,
+        rollout_top_p=1.0,
+        rollout_top_k=-1,
+        rollout_stop=None,
+        eval_datasets=[eval_dataset],
+        use_rollout_routing_replay=False,
+        use_fault_tolerance=False,
+        check_weight_update_equal=False,
+    )
+    values.update(overrides)
+    return types.SimpleNamespace(**values)
+
+
+@pytest.mark.unit
+def test_hf_rollout_argument_contract_accepts_maze_layout(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+
+    module._validate_hf_rollout_args(make_hf_rollout_validation_args())
+
+
+@pytest.mark.unit
+def test_hf_rollout_argument_contract_rejects_sharded_colocated_weights(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+
+    with pytest.raises(ValueError, match="unsharded Megatron parameters"):
+        module._validate_hf_rollout_args(
+            make_hf_rollout_validation_args(tensor_model_parallel_size=2)
+        )
+
+
+@pytest.mark.unit
+def test_hf_rollout_argument_contract_accepts_filtered_sampling(monkeypatch):
+    module = load_slime_arguments_module(monkeypatch)
+    args = make_hf_rollout_validation_args(rollout_top_p=0.9, rollout_top_k=8)
+    args.eval_datasets[0].top_p = 0.8
+    args.eval_datasets[0].top_k = 4
+
+    module._validate_hf_rollout_args(args)
+
+
 @pytest.mark.unit
 def test_maxrl_resolves_degree_and_eval_rollout_default(monkeypatch):
     module = load_slime_arguments_module(monkeypatch)

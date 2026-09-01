@@ -31,6 +31,7 @@ except ImportError:
 from slime.utils import logging_utils
 from slime.utils.memory_utils import clear_memory
 from slime.utils.regression import uses_scalar_head
+from slime.utils.types import requires_rollout_token_support
 
 from .checkpoint import load_checkpoint, save_checkpoint
 from .cp_utils import reduce_train_step_metrics
@@ -77,7 +78,7 @@ def _wrap_forward_step_with_microbatch_pbar(forward_step_func, pbar):
 
 
 def _with_rollout_top_p_token_keys(args: Namespace, keys: Sequence[str]) -> list[str]:
-    if args.rollout_top_p == 1.0:
+    if not requires_rollout_token_support(args):
         return list(keys)
     return [*keys, *ROLLOUT_TOP_P_TOKEN_KEYS]
 

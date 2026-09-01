@@ -135,7 +135,7 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
                 "--megatron-to-hf-mode",
                 choices=["raw", "bridge"],
                 default="raw",
-                help="The method to convert megatron weights to hugging face weights for SGLang.",
+                help="The method used to convert Megatron weights for Hugging Face-format rollout models.",
             )
             # Delta weight sync.
             parser.add_argument(
@@ -311,15 +311,37 @@ def get_slime_extra_args_provider(add_custom_arguments=None):
         # rollout
         def add_rollout_arguments(parser):
             parser.add_argument(
+                "--rollout-backend",
+                choices=("sglang", "huggingface"),
+                default="sglang",
+                help=(
+                    "Inference backend used for rollout generation. The Hugging Face backend is intended "
+                    "for small causal language models and performs bounded batched generation directly "
+                    "with Transformers."
+                ),
+            )
+            parser.add_argument(
+                "--hf-rollout-batch-size",
+                type=int,
+                default=256,
+                help="Maximum number of prompts generated in one Hugging Face model.generate call per engine.",
+            )
+            parser.add_argument(
+                "--hf-rollout-attn-implementation",
+                type=str,
+                default=None,
+                help="Optional Transformers attn_implementation used by Hugging Face rollout workers.",
+            )
+            parser.add_argument(
                 "--hf-checkpoint",
                 type=str,
                 default=None,
                 help=(
                     "The huggingface checkpoint of the trained model. "
-                    "This is used to initialize sglang and also provide the tokenizer. "
-                    "Note that, we will always update the parameters in sglang with that of megatron before training, "
+                    "This initializes the rollout backend and provides its tokenizer. "
+                    "The rollout parameters are updated from Megatron before training, "
                     "so you only need to provide a huggingface checkpoint that has the same architecture as the model you want to train. "
-                    "It doesn't necessary need to contain the most up-to-date parameters."
+                    "It does not necessarily need to contain the most up-to-date parameters."
                 ),
             )
             parser.add_argument(
@@ -1955,6 +1977,92 @@ def _validate_sft_eval_args(args) -> None:
         raise ValueError("--eval-sft-loss requires --eval-interval.")
 
 
+def _validate_hf_rollout_args(args) -> None:
+    if getattr(args, "rollout_backend", "sglang") != "huggingface" or args.debug_train_only:
+        return
+    if args.hf_rollout_batch_size <= 0:
+        raise ValueError("--hf-rollout-batch-size must be positive.")
+    if args.rollout_num_gpus is None or args.rollout_num_gpus <= 0:
+        raise ValueError("The Hugging Face rollout backend requires at least one rollout GPU.")
+    if args.rollout_num_gpus_per_engine != 1:
+        raise ValueError("The Hugging Face rollout backend requires --rollout-num-gpus-per-engine 1.")
+    if args.rollout_external:
+        raise ValueError("The Hugging Face rollout backend does not support external rollout engines.")
+    if args.sglang_config is not None or args.prefill_num_servers is not None:
+        raise ValueError("The Hugging Face rollout backend does not support SGLang deployment configuration.")
+    if args.update_weight_mode != "full":
+        raise ValueError("The Hugging Face rollout backend only supports full weight updates.")
+    if not args.colocate and not args.debug_rollout_only and args.update_weight_transport != "disk":
+        raise ValueError(
+            "Non-colocated Hugging Face rollout requires --update-weight-transport disk; "
+            "colocated rollout uses the existing CUDA-IPC tensor path."
+        )
+    if args.colocate and args.update_weight_transport != "disk":
+        parallel_sizes = {
+            "tensor": args.tensor_model_parallel_size,
+            "pipeline": args.pipeline_model_parallel_size,
+            "expert": args.expert_model_parallel_size,
+        }
+        nontrivial_parallelism = {name: size for name, size in parallel_sizes.items() if size != 1}
+        if nontrivial_parallelism:
+            raise ValueError(
+                "Colocated Hugging Face tensor updates require unsharded Megatron parameters; "
+                f"expected tensor/pipeline/expert parallel sizes of 1, got {nontrivial_parallelism}."
+            )
+        actor_num_gpus = args.actor_num_nodes * args.actor_num_gpus_per_node
+        if args.rollout_num_gpus > actor_num_gpus:
+            raise ValueError(
+                "Colocated Hugging Face tensor updates cannot target rollout-only GPUs; "
+                f"rollout_num_gpus={args.rollout_num_gpus}, actor_num_gpus={actor_num_gpus}."
+            )
+    if args.update_weight_local_checkpoint_dir is not None:
+        raise ValueError("The Hugging Face rollout backend does not support local checkpoint pulling.")
+    if args.partial_rollout:
+        raise ValueError("The Hugging Face rollout backend does not support partial rollout.")
+    if args.group_rm:
+        raise ValueError("The Hugging Face rollout backend does not support group reward models.")
+    if args.custom_generate_function_path is not None:
+        raise ValueError("The Hugging Face rollout backend does not support custom generate functions.")
+    if not 0.0 < args.rollout_top_p <= 1.0:
+        raise ValueError(f"Hugging Face rollout requires --rollout-top-p in (0, 1]; got {args.rollout_top_p}.")
+    if args.rollout_top_k < -1:
+        raise ValueError(
+            "Hugging Face rollout requires --rollout-top-k to be -1, 0, or a positive integer; "
+            f"got {args.rollout_top_k}."
+        )
+    if args.rollout_stop:
+        raise ValueError("The Hugging Face rollout backend supports stop token ids, not text stop strings.")
+    for dataset in args.eval_datasets:
+        if dataset.custom_generate_function_path is not None or dataset.app_service is not None:
+            raise ValueError(
+                f"The Hugging Face rollout backend does not support custom generation for eval dataset {dataset.name!r}."
+            )
+        if not 0.0 < dataset.top_p <= 1.0:
+            raise ValueError(
+                f"Hugging Face rollout requires top_p in (0, 1] for eval dataset {dataset.name!r}; "
+                f"got {dataset.top_p}."
+            )
+        if dataset.top_k < -1:
+            raise ValueError(
+                "Hugging Face rollout requires top_k to be -1, 0, or a positive integer for "
+                f"eval dataset {dataset.name!r}; got {dataset.top_k}."
+            )
+        if dataset.stop:
+            raise ValueError(
+                f"The Hugging Face rollout backend supports token-id stops, not text stops, for eval dataset {dataset.name!r}."
+            )
+        if dataset.no_stop_trim is False:
+            raise ValueError(
+                f"The Hugging Face rollout backend always retains the stop token for eval dataset {dataset.name!r}."
+            )
+    if args.use_rollout_routing_replay:
+        raise ValueError("The Hugging Face rollout backend does not support expert-routing replay.")
+    if args.use_fault_tolerance:
+        raise ValueError("The Hugging Face rollout backend does not yet support rollout fault tolerance.")
+    if args.check_weight_update_equal:
+        raise ValueError("The Hugging Face rollout backend does not support --check-weight-update-equal.")
+
+
 def _resolve_bridge_load_path(load: str | None, ref_load: str | None, hf_checkpoint: str) -> str:
     """Use an existing configured checkpoint, otherwise fall back to the initial model."""
     if load is not None and os.path.isdir(load):
@@ -2101,7 +2209,7 @@ def slime_validate_args(args):
     if args.load_debug_rollout_data is not None:
         logger.info(
             f"load_debug_rollout_data {args.load_debug_rollout_data} is set, "
-            "will not instantiate sglang servers and will only run the training process."
+            "will not instantiate rollout servers and will only run the training process."
         )
         args.debug_train_only = True
 
@@ -2156,7 +2264,7 @@ def slime_validate_args(args):
         if args.rollout_num_gpus is None:
             args.rollout_num_gpus = args.actor_num_gpus_per_node * args.actor_num_nodes
         elif args.rollout_num_gpus == 0:
-            logger.info("rollout_num_gpus is 0 under colocate; no local SGLang engines will be launched.")
+            logger.info("rollout_num_gpus is 0 under colocate; no local rollout engines will be launched.")
 
     if args.offload_train is None:
         args.offload_train = False
@@ -2169,6 +2277,14 @@ def slime_validate_args(args):
     if args.offload_train:
         args.disable_grad_buffers_cpu_backup = True
         args.disable_param_buffers_cpu_backup = True
+
+    if getattr(args, "rollout_backend", "sglang") == "huggingface":
+        default_sglang_rollout = "slime.rollout.sglang_rollout.generate_rollout"
+        hf_rollout = "slime.rollout.hf_rollout.generate_rollout"
+        if args.rollout_function_path == default_sglang_rollout:
+            args.rollout_function_path = hf_rollout
+        if args.eval_function_path == default_sglang_rollout:
+            args.eval_function_path = hf_rollout
 
     if args.eval_function_path is None:
         args.eval_function_path = args.rollout_function_path
@@ -2227,6 +2343,7 @@ def slime_validate_args(args):
     _validate_rloo_args(args)
     _validate_regression_args(args)
     _validate_sft_eval_args(args)
+    _validate_hf_rollout_args(args)
 
     if args.eval_max_context_len is None:
         logger.info(

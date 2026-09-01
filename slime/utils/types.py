@@ -10,6 +10,15 @@ _TOP_P_TOKEN_ID_META_KEYS = ("top_p_token_ids", "top_p_kept_token_ids")
 _TOP_P_TOKEN_OFFSET_META_KEYS = ("top_p_token_offsets", "top_p_kept_token_offsets")
 
 
+def requires_rollout_token_support(args: Any) -> bool:
+    """Whether rollout log-probs need replay of a recorded finite token support."""
+    if getattr(args, "rollout_top_p", 1.0) != 1.0:
+        return True
+    return getattr(args, "rollout_backend", "sglang") == "huggingface" and getattr(
+        args, "rollout_top_k", -1
+    ) not in (-1, 0)
+
+
 def _extract_rollout_top_p_token_data(
     meta_info: dict[str, Any],
     *,
@@ -20,17 +29,17 @@ def _extract_rollout_top_p_token_data(
     if token_ids is None and offsets is None:
         return None
     if token_ids is None or offsets is None:
-        raise ValueError("SGLang top-p token replay must include both token ids and offsets.")
+        raise ValueError("Rollout token support replay must include both token ids and offsets.")
     if offsets.numel() == 0 or int(offsets[0]) != 0:
-        raise ValueError(f"SGLang top-p token offsets must start with 0, got {offsets[:1].tolist()}.")
+        raise ValueError(f"Rollout token support offsets must start with 0, got {offsets[:1].tolist()}.")
     if int(offsets[-1]) != token_ids.numel():
         raise ValueError(
-            "SGLang top-p token ids/offsets mismatch: "
+            "Rollout token support ids/offsets mismatch: "
             f"offsets[-1]={int(offsets[-1])}, len(token_ids)={token_ids.numel()}."
         )
     if expected_num_tokens is not None and offsets.numel() != expected_num_tokens + 1:
         raise ValueError(
-            "SGLang top-p token offsets length must equal generated token count + 1: "
+            "Rollout token support offsets length must equal generated token count + 1: "
             f"len(offsets)={offsets.numel()}, generated={expected_num_tokens}."
         )
     return token_ids, offsets

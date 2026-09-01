@@ -22,7 +22,7 @@ from slime.utils.ppo_utils import (
     get_reinforce_plus_plus_baseline_advantages,
     get_reinforce_plus_plus_returns,
 )
-from slime.utils.types import RolloutBatch
+from slime.utils.types import RolloutBatch, requires_rollout_token_support
 
 from .cp_utils import (
     all_gather_with_cp,
@@ -99,13 +99,15 @@ def get_last_token_predictions(
 
 
 def get_rollout_top_p_logprob_kwargs(args: Namespace, batch: dict[str, Any]) -> dict[str, Any]:
-    if args.rollout_top_p == 1.0:
+    if not requires_rollout_token_support(args):
         return {}
 
     top_p_token_ids = batch.get("rollout_top_p_token_ids")
     top_p_token_offsets = batch.get("rollout_top_p_token_offsets")
     if top_p_token_ids is None or top_p_token_offsets is None:
-        raise ValueError("rollout_top_p != 1.0 requires rollout_top_p_token_ids and rollout_top_p_token_offsets.")
+        raise ValueError(
+            "Filtered rollout sampling requires rollout_top_p_token_ids and rollout_top_p_token_offsets."
+        )
     return {
         "top_p_token_ids": top_p_token_ids,
         "top_p_token_offsets": top_p_token_offsets,
