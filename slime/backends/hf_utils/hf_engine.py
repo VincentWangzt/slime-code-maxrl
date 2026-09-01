@@ -10,7 +10,11 @@ from typing import Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from slime.backends.megatron_utils.sglang import FlattenedTensorBucket, MultiprocessingSerializer
+from slime.backends.megatron_utils.sglang import (
+    FlattenedTensorBucket,
+    MultiprocessingSerializer,
+    monkey_patch_torch_reductions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +22,9 @@ logger = logging.getLogger(__name__)
 @torch.no_grad()
 def load_flattened_weight_buckets(model, serialized_named_tensors: list[str]) -> set[str]:
     """Copy Slime's colocated CUDA-IPC bucket format into a Transformers model."""
+    # The producer serializes CUDA tensors with SGLang's UUID-aware reducer.
+    # Install its matching rebuild hook in this Ray process before unpickling.
+    monkey_patch_torch_reductions()
     target_tensors = model.state_dict(keep_vars=True)
     updated_names = set()
     for serialized_bucket in serialized_named_tensors:

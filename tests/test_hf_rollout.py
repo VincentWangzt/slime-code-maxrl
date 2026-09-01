@@ -14,6 +14,7 @@ from transformers.generation.logits_process import (
     TopPLogitsWarper,
 )
 
+import slime.backends.hf_utils.hf_engine as hf_engine
 from maze.model import create_model
 from slime.backends.hf_utils.hf_engine import generate_batch_with_model, load_flattened_weight_buckets
 from slime.backends.megatron_utils.sglang import FlattenedTensorBucket, MultiprocessingSerializer
@@ -230,7 +231,9 @@ def test_hf_batch_generation_logprobs_include_temperature(tmp_path):
 
 
 @pytest.mark.unit
-def test_hf_weight_loader_consumes_slime_flattened_buckets():
+def test_hf_weight_loader_consumes_slime_flattened_buckets(monkeypatch):
+    patch_calls = []
+    monkeypatch.setattr(hf_engine, "monkey_patch_torch_reductions", lambda: patch_calls.append(True))
     model = torch.nn.Linear(3, 2, bias=False)
     replacement = torch.arange(6, dtype=model.weight.dtype).reshape_as(model.weight)
     bucket = FlattenedTensorBucket(named_tensors=[("weight", replacement)])
@@ -244,5 +247,6 @@ def test_hf_weight_loader_consumes_slime_flattened_buckets():
 
     updated_names = load_flattened_weight_buckets(model, [serialized])
 
+    assert patch_calls == [True]
     assert updated_names == {"weight"}
     assert torch.equal(model.weight, replacement)
